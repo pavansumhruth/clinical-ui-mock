@@ -1,0 +1,271 @@
+
+// ============================================================================
+// INITIALIZATION & UTILITY FUNCTIONS
+// ============================================================================
+
+function generateSessionId() {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+function log(message, data) {
+    console.log(`[Clinical UI] ${message}`, data || '');
+}
+
+// ============================================================================
+// PATIENT & ENCOUNTER MANAGEMENT
+// ============================================================================
+
+function newEncounter(patientKey) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    if (!patient) {
+        alert('Patient not found');
+        return;
+    }
+
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = null;
+    STATE.sessionId = generateSessionId();
+    STATE.questions = [];
+    STATE.answers = [];
+    STATE.selectedDiagnoses = [];
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+
+    document.getElementById('currentPatientName').textContent = patient.name;
+    document.getElementById('currentComplaint').textContent = 'New Consultation';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('consultationForm').style.display = 'block';
+    document.querySelector('.encounter-selector').style.display = 'none';
+
+    clearForm();
+    log('New encounter started', { patient: patient.name, sessionId: STATE.sessionId });
+}
+
+function loadEncounter(patientKey, complaintKey, encounterNum) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    const complaint = patient.complaints[complaintKey];
+
+    if (!patient || !complaint) {
+        alert('Patient or complaint not found');
+        return;
+    }
+
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = complaintKey;
+    STATE.sessionId = generateSessionId();
+
+    document.getElementById('currentPatientName').textContent = patient.name;
+    document.getElementById('currentComplaint').textContent =
+        `${complaint.name} - ${complaint.date || 'Today'} - Encounter ${encounterNum} of ${complaint.visits}`;
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('consultationForm').style.display = 'block';
+
+    if (complaint.visits > 1) {
+        const selector = document.querySelector('.encounter-selector');
+        selector.style.display = 'flex';
+
+        const dropdown = document.getElementById('encounterDropdown');
+        dropdown.innerHTML = '';
+
+        for (let i = 1; i <= complaint.visits; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = `Encounter ${i}`;
+            if (i === encounterNum) option.selected = true;
+            dropdown.appendChild(option);
+        }
+    }
+
+    if (encounterNum === 1) {
+        document.getElementById('chiefComplaintInput').value = complaint.name;
+        addChiefComplaint();
+    }
+
+    log('Loaded encounter', {
+        patient: patient.name,
+        complaint: complaint.name,
+        encounter: encounterNum
+    });
+}
+
+function switchEncounter() {
+    const encounterNum = parseInt(document.getElementById('encounterDropdown').value);
+    loadEncounter(STATE.currentPatient.id, STATE.currentComplaint, encounterNum);
+}
+
+function clearForm() {
+    document.getElementById('chiefComplaintChips').innerHTML = '';
+    document.getElementById('chiefComplaintInput').value = '';
+    document.getElementById('height').value = '';
+    document.getElementById('weight').value = '';
+    document.getElementById('headCirc').value = '';
+    document.getElementById('temp').value = '';
+    document.getElementById('bp').value = '';
+    document.getElementById('questionsContainer').innerHTML = '';
+
+    document.getElementById('diagnosisContainer').innerHTML =
+        '<p class="empty-state">Answer questions to generate diagnoses</p>';
+    document.getElementById('investigationsContainer').innerHTML =
+        '<p class="empty-state">Select diagnoses first</p>';
+    document.getElementById('medicationsContainer').innerHTML =
+        '<p class="empty-state">Select investigations first</p>';
+    document.getElementById('proceduresContainer').innerHTML =
+        '<p class="empty-state">Select medications first</p>';
+
+    document.getElementById('diagnosisNotes').value = '';
+    document.getElementById('investigationsNotes').value = '';
+    document.getElementById('medicationsNotes').value = '';
+    document.getElementById('proceduresNotes').value = '';
+    document.getElementById('adviceText').value = '';
+    document.getElementById('adviceNotes').value = '';
+
+    document.getElementById('manualQAList').innerHTML = '';
+    document.getElementById('manualDiagList').innerHTML = '';
+    document.getElementById('manualInvList').innerHTML = '';
+    document.getElementById('manualMedList').innerHTML = '';
+    document.getElementById('manualProcList').innerHTML = '';
+}
+
+// ============================================================================
+// CHIEF COMPLAINT
+// ============================================================================
+
+function addChiefComplaint() {
+    const input = document.getElementById('chiefComplaintInput');
+    const complaint = input.value.trim();
+    if (!complaint) return;
+
+    const container = document.getElementById('chiefComplaintChips');
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = `
+        ${complaint}
+        <span class="chip-remove" onclick="removeChip(this)">×</span>
+    `;
+    container.appendChild(chip);
+    input.value = '';
+
+    log('Added chief complaint', complaint);
+}
+
+function removeChip(element) {
+    element.parentElement.remove();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('chiefComplaintInput');
+    if (input) {
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addChiefComplaint();
+        });
+    }
+});
+
+// ============================================================================
+// DIAGNOSIS
+// ============================================================================
+
+function toggleDiagnosis(diagnosis) {
+    const index = STATE.selectedDiagnoses.indexOf(diagnosis);
+    if (index > -1) {
+        STATE.selectedDiagnoses.splice(index, 1);
+    } else {
+        STATE.selectedDiagnoses.push(diagnosis);
+    }
+
+    log('Diagnosis toggled', { diagnosis, selected: STATE.selectedDiagnoses });
+}
+
+function updateDiagnosisButton() {
+    return;
+}
+
+// ============================================================================
+// INVESTIGATIONS
+// ============================================================================
+
+async function generateInvestigations() {
+    const container = document.getElementById('investigationsContainer');
+    container.innerHTML = '<p class="empty-state">Generating investigations...</p>';
+
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-diagnoses`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                selected: [...STATE.selectedDiagnoses]
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed');
+
+        const data = await response.json();
+
+        if (data.investigations?.length) {
+            container.innerHTML = '';
+            data.investigations.forEach(inv => {
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" onchange="toggleInvestigation('${inv.name}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${inv.name}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        const btn = document.getElementById('btnNextInv');
+        if (btn) {
+            btn.textContent = 'Investigations Generated ✓';
+            btn.disabled = true;
+            btn.style.backgroundColor = '#10b981';
+            btn.style.color = '#fff';
+        }
+
+    } catch {
+        document.getElementById('investigationsContainer').innerHTML =
+            '<p class="empty-state">Failed</p>';
+    }
+}
+
+function toggleInvestigation(investigation) {
+    const index = STATE.selectedInvestigations.indexOf(investigation);
+    if (index > -1) {
+        STATE.selectedInvestigations.splice(index, 1);
+    } else {
+        STATE.selectedInvestigations.push(investigation);
+    }
+}
+
+// ============================================================================
+// SAVE FUNCTIONS
+// ============================================================================
+
+function hideUnselected(containerId) {
+    const container = document.getElementById(containerId);
+    const checkboxes = container.querySelectorAll('.checkbox-item');
+
+    checkboxes.forEach(item => {
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        if (!checkbox.checked) {
+            item.classList.add('removing');
+            setTimeout(() => item.remove(), 300);
+        }
+    });
+}
+
+function saveDiagnoses() {
+    hideUnselected('diagnosisContainer');
+    alert(`Saved ${STATE.selectedDiagnoses.length} diagnoses`);
+    log('Diagnoses saved', STATE.selectedDiagnoses);
+}
+
+// ============================================================================
+// FINAL INIT
+// ============================================================================
+
+log('Clinical UI Initialized', { config: CONFIG });

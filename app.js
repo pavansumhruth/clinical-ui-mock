@@ -1,0 +1,818 @@
+// ============================================================================
+// INITIALIZATION & UTILITY FUNCTIONS
+// ============================================================================
+
+function generateSessionId() {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+function log(message, data) {
+    console.log(`[Clinical UI] ${message}`, data || '');
+}
+
+// ============================================================================
+// PATIENT & ENCOUNTER MANAGEMENT
+// ============================================================================
+
+function newEncounter(patientKey) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    if (!patient) { alert('Patient not found'); return; }
+
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = null;
+    STATE.sessionId = generateSessionId();
+    STATE.questions = [];
+    STATE.answers = [];
+    STATE.selectedDiagnoses = [];
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+    STATE.manualQuestions = [];
+    STATE.manualDiagnoses = [];
+    STATE.manualInvestigations = [];
+    STATE.manualMedications = [];
+    STATE.manualProcedures = [];
+
+    document.getElementById('currentPatientName').textContent = patient.name;
+    document.getElementById('currentComplaint').textContent = 'New Consultation';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('consultationForm').style.display = 'block';
+    document.querySelector('.encounter-selector').style.display = 'none';
+
+    clearForm();
+    log('New encounter started', { patient: patient.name, sessionId: STATE.sessionId });
+}
+
+function loadEncounter(patientKey, complaintKey, encounterNum) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    if (!patient) { alert('Patient not found'); return; }
+    const complaint = patient.complaints[complaintKey];
+    if (!complaint) { alert('Complaint not found'); return; }
+
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = complaintKey;
+    STATE.sessionId = generateSessionId();
+
+    document.getElementById('currentPatientName').textContent = patient.name;
+    document.getElementById('currentComplaint').textContent =
+        `${complaint.name} - ${complaint.date || 'Today'} - Encounter ${encounterNum} of ${complaint.visits}`;
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('consultationForm').style.display = 'block';
+
+    if (complaint.visits > 1) {
+        const selector = document.querySelector('.encounter-selector');
+        selector.style.display = 'flex';
+        const dropdown = document.getElementById('encounterDropdown');
+        dropdown.innerHTML = '';
+        for (let i = 1; i <= complaint.visits; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = `Encounter ${i}`;
+            if (i === encounterNum) option.selected = true;
+            dropdown.appendChild(option);
+        }
+    } else {
+        document.querySelector('.encounter-selector').style.display = 'none';
+    }
+
+    clearForm();
+
+    if (encounterNum === 1) {
+        document.getElementById('chiefComplaintInput').value = complaint.name;
+        addChiefComplaint();
+    }
+
+    log('Loaded encounter', { patient: patient.name, complaint: complaint.name, encounter: encounterNum });
+}
+
+function switchEncounter() {
+    if (!STATE.currentPatient || !STATE.currentComplaint) return;
+    const encounterNum = parseInt(document.getElementById('encounterDropdown').value);
+    const patientKey = Object.keys(CONFIG.PATIENTS).find(
+        k => CONFIG.PATIENTS[k] === STATE.currentPatient
+    );
+    if (patientKey) loadEncounter(patientKey, STATE.currentComplaint, encounterNum);
+}
+
+function clearForm() {
+    document.getElementById('chiefComplaintChips').innerHTML = '';
+    document.getElementById('chiefComplaintInput').value = '';
+    document.getElementById('height').value = '';
+    document.getElementById('weight').value = '';
+    document.getElementById('headCirc').value = '';
+    document.getElementById('temp').value = '';
+    document.getElementById('bp').value = '';
+    document.getElementById('questionsContainer').innerHTML = '';
+
+    document.getElementById('diagnosisContainer').innerHTML =
+        '<p class="empty-state">Answer questions to generate diagnoses</p>';
+    document.getElementById('investigationsContainer').innerHTML =
+        '<p class="empty-state">Select diagnoses first</p>';
+    document.getElementById('medicationsContainer').innerHTML =
+        '<p class="empty-state">Select investigations first</p>';
+    document.getElementById('proceduresContainer').innerHTML =
+        '<p class="empty-state">Select medications first</p>';
+
+    document.getElementById('diagnosisNotes').value = '';
+    document.getElementById('investigationsNotes').value = '';
+    document.getElementById('medicationsNotes').value = '';
+    document.getElementById('proceduresNotes').value = '';
+    document.getElementById('adviceText').value = '';
+    document.getElementById('adviceNotes').value = '';
+
+    document.getElementById('manualQAList').innerHTML = '';
+    document.getElementById('manualDiagList').innerHTML = '';
+    document.getElementById('manualInvList').innerHTML = '';
+    document.getElementById('manualMedList').innerHTML = '';
+    document.getElementById('manualProcList').innerHTML = '';
+
+    // Hide next buttons
+    const btns = ['btnNextInv', 'btnNextMed', 'btnNextProc'];
+    btns.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.style.display = 'none';
+    });
+
+    STATE.selectedDiagnoses = [];
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+}
+
+// ============================================================================
+// CHIEF COMPLAINT
+// ============================================================================
+
+function addChiefComplaint() {
+    const input = document.getElementById('chiefComplaintInput');
+    const complaint = input.value.trim();
+    if (!complaint) return;
+
+    const container = document.getElementById('chiefComplaintChips');
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = `${complaint}<span class="chip-remove" onclick="removeChip(this)">×</span>`;
+    container.appendChild(chip);
+    input.value = '';
+    log('Added chief complaint', complaint);
+}
+
+function removeChip(element) {
+    element.parentElement.remove();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('chiefComplaintInput');
+    if (input) {
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addChiefComplaint();
+        });
+    }
+});
+
+// ============================================================================
+// QUESTIONS — calls POST /start then POST /answer
+// ============================================================================
+
+async function generateQuestions() {
+    const chips = document.querySelectorAll('#chiefComplaintChips .chip');
+    const complaints = Array.from(chips).map(c => c.textContent.replace('×', '').trim());
+
+    if (complaints.length === 0) {
+        alert('Please add a chief complaint first.');
+        return;
+    }
+
+    const chiefComplaint = complaints.join(', ');
+    const vitals = [
+        document.getElementById('height').value ? `Height: ${document.getElementById('height').value}cm` : '',
+        document.getElementById('weight').value ? `Weight: ${document.getElementById('weight').value}kg` : '',
+        document.getElementById('temp').value   ? `Temp: ${document.getElementById('temp').value}°C`   : '',
+        document.getElementById('bp').value     ? `BP: ${document.getElementById('bp').value}`          : '',
+    ].filter(Boolean).join(', ');
+
+    const btn = document.getElementById('generateQuestionsBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    const container = document.getElementById('questionsContainer');
+    container.innerHTML = '<p class="empty-state">Calling triage engine...</p>';
+
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chief_complaint: chiefComplaint,
+                clinical_history: vitals || '',
+                patient_id: STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID,
+            })
+        });
+
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
+        const data = await response.json();
+
+        STATE.sessionId = data.session_id;
+        STATE.questions = [];
+        container.innerHTML = '';
+
+        // Render first question
+        renderQuestion(data, container);
+
+        btn.textContent = 'Questions Generated ✓';
+        btn.style.backgroundColor = '#10b981';
+        btn.style.color = '#fff';
+
+        log('Questions started', data);
+    } catch (e) {
+        container.innerHTML = `<p class="empty-state" style="color:red;">Error: ${e.message}</p>`;
+        btn.disabled = false;
+        btn.textContent = 'Generate Questions';
+        log('generateQuestions error', e);
+    }
+}
+
+function renderQuestion(data, container) {
+    if (!container) container = document.getElementById('questionsContainer');
+
+    const qNum = STATE.questions.length + 1;
+    const questionDiv = document.createElement('div');
+    questionDiv.className = 'question-item';
+    questionDiv.id = `question_${qNum}`;
+
+    const optionsHtml = (data.options || []).map(opt =>
+        `<button class="option-btn" onclick="answerQuestion(this, '${opt.replace(/'/g, "\\'")}', ${qNum})">${opt}</button>`
+    ).join('');
+
+    questionDiv.innerHTML = `
+        <div class="question-text">Q${qNum}: ${data.question}</div>
+        <div class="options-container">${optionsHtml}</div>
+    `;
+
+    container.appendChild(questionDiv);
+
+    STATE.questions.push({ question: data.question, answer: null });
+    log('Rendered question', data.question);
+}
+
+async function answerQuestion(btn, selectedOption, qIndex) {
+    // Mark selected
+    const optionsContainer = btn.parentElement;
+    optionsContainer.querySelectorAll('.option-btn').forEach(b => {
+        b.classList.remove('selected');
+        b.disabled = true;
+    });
+    btn.classList.add('selected');
+
+    // Save answer
+    STATE.questions[qIndex - 1].answer = selectedOption;
+    STATE.answers.push(selectedOption);
+
+    const container = document.getElementById('questionsContainer');
+
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                selected_option: selectedOption
+            })
+        });
+
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
+        const data = await response.json();
+
+        if (data.completed) {
+            // Move to diagnosis
+            renderDiagnosisFromQuestions(data);
+        } else {
+            // Render next question
+            renderQuestion(data, container);
+        }
+    } catch (e) {
+        const errDiv = document.createElement('p');
+        errDiv.className = 'empty-state';
+        errDiv.style.color = 'red';
+        errDiv.textContent = `Error: ${e.message}`;
+        container.appendChild(errDiv);
+        log('answerQuestion error', e);
+    }
+}
+
+function renderDiagnosisFromQuestions(data) {
+    const container = document.getElementById('diagnosisContainer');
+    container.innerHTML = '';
+
+    const diagnoses = data.considerations || data.diagnoses || [];
+
+    if (diagnoses.length === 0) {
+        container.innerHTML = '<p class="empty-state">No diagnoses returned. Try adding manually.</p>';
+    } else {
+        diagnoses.forEach(d => {
+            const name = typeof d === 'string' ? d : d.name;
+            const likelihood = typeof d === 'object' ? (d.likelihood || '') : '';
+
+            const item = document.createElement('div');
+            item.className = 'checkbox-item';
+            item.innerHTML = `
+                <input type="checkbox" id="diag_${name}" onchange="toggleDiagnosis('${name.replace(/'/g, "\\'")}')">
+                <div class="checkbox-content">
+                    <div class="checkbox-label">${name}</div>
+                    ${likelihood ? `<div class="checkbox-detail">Likelihood: ${likelihood}</div>` : ''}
+                </div>
+            `;
+            container.appendChild(item);
+        });
+    }
+
+    // Show Next button
+    const btn = document.getElementById('btnNextInv');
+    if (btn) btn.style.display = 'inline-block';
+
+    log('Diagnoses rendered', diagnoses);
+}
+
+// ============================================================================
+// DIAGNOSIS
+// ============================================================================
+
+function toggleDiagnosis(diagnosis) {
+    const index = STATE.selectedDiagnoses.indexOf(diagnosis);
+    if (index > -1) {
+        STATE.selectedDiagnoses.splice(index, 1);
+    } else {
+        STATE.selectedDiagnoses.push(diagnosis);
+    }
+    log('Diagnosis toggled', { diagnosis, selected: STATE.selectedDiagnoses });
+}
+
+function updateDiagnosisButton() { return; }
+
+function saveDiagnoses() {
+    hideUnselected('diagnosisContainer');
+    log('Diagnoses saved', STATE.selectedDiagnoses);
+}
+
+function proceedToInvestigations() {
+    const allDiagnoses = [
+        ...STATE.selectedDiagnoses,
+        ...getManualEntries('manualDiagList')
+    ];
+
+    if (allDiagnoses.length === 0) {
+        alert('Please select or add at least one diagnosis first.');
+        return;
+    }
+
+    // Merge manual into selected
+    STATE.selectedDiagnoses = [...new Set(allDiagnoses)];
+    generateInvestigations();
+}
+
+// ============================================================================
+// INVESTIGATIONS
+// ============================================================================
+
+async function generateInvestigations() {
+    const container = document.getElementById('investigationsContainer');
+    container.innerHTML = '<p class="empty-state">Generating investigations...</p>';
+
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-diagnoses`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                selected: [...STATE.selectedDiagnoses]
+            })
+        });
+
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
+        const data = await response.json();
+
+        container.innerHTML = '';
+
+        if (data.investigations?.length) {
+            data.investigations.forEach(inv => {
+                const name = inv.name || inv;
+                const reason = inv.reason || '';
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" onchange="toggleInvestigation('${name.replace(/'/g, "\\'")}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${name}</div>
+                        ${reason ? `<div class="checkbox-detail">${reason}</div>` : ''}
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        } else {
+            container.innerHTML = '<p class="empty-state">No investigations returned. Add manually below.</p>';
+        }
+
+        const btn = document.getElementById('btnNextMed');
+        if (btn) btn.style.display = 'inline-block';
+
+        const invBtn = document.getElementById('btnNextInv');
+        if (invBtn) {
+            invBtn.textContent = 'Investigations Generated ✓';
+            invBtn.disabled = true;
+            invBtn.style.backgroundColor = '#10b981';
+            invBtn.style.color = '#fff';
+        }
+
+        log('Investigations generated', data);
+    } catch (e) {
+        container.innerHTML = `<p class="empty-state" style="color:red;">Error: ${e.message}</p>`;
+        log('generateInvestigations error', e);
+    }
+}
+
+function toggleInvestigation(investigation) {
+    const index = STATE.selectedInvestigations.indexOf(investigation);
+    if (index > -1) {
+        STATE.selectedInvestigations.splice(index, 1);
+    } else {
+        STATE.selectedInvestigations.push(investigation);
+    }
+}
+
+function saveInvestigations() {
+    hideUnselected('investigationsContainer');
+    log('Investigations saved', STATE.selectedInvestigations);
+}
+
+function proceedToMedications() {
+    const allInv = [
+        ...STATE.selectedInvestigations,
+        ...getManualEntries('manualInvList')
+    ];
+
+    if (allInv.length === 0) {
+        alert('Please select or add at least one investigation first.');
+        return;
+    }
+
+    STATE.selectedInvestigations = [...new Set(allInv)];
+    generateMedications();
+}
+
+// ============================================================================
+// MEDICATIONS
+// ============================================================================
+
+async function generateMedications() {
+    const container = document.getElementById('medicationsContainer');
+    container.innerHTML = '<p class="empty-state">Generating medications...</p>';
+
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-investigations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                selected: [...STATE.selectedInvestigations]
+            })
+        });
+
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
+        const data = await response.json();
+
+        container.innerHTML = '';
+
+        if (data.medications?.length) {
+            data.medications.forEach(med => {
+                const name  = med.name  || med;
+                const dose  = med.dose  || '';
+                const route = med.route || '';
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" onchange="toggleMedication('${name.replace(/'/g, "\\'")}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${name}</div>
+                        ${dose  ? `<div class="checkbox-detail">${dose}</div>`  : ''}
+                        ${route ? `<div class="checkbox-detail">Route: ${route}</div>` : ''}
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        } else {
+            container.innerHTML = '<p class="empty-state">No medications returned. Add manually below.</p>';
+        }
+
+        const btn = document.getElementById('btnNextProc');
+        if (btn) btn.style.display = 'inline-block';
+
+        const medBtn = document.getElementById('btnNextMed');
+        if (medBtn) {
+            medBtn.textContent = 'Medications Generated ✓';
+            medBtn.disabled = true;
+            medBtn.style.backgroundColor = '#10b981';
+            medBtn.style.color = '#fff';
+        }
+
+        log('Medications generated', data);
+    } catch (e) {
+        container.innerHTML = `<p class="empty-state" style="color:red;">Error: ${e.message}</p>`;
+        log('generateMedications error', e);
+    }
+}
+
+function toggleMedication(medication) {
+    const index = STATE.selectedMedications.indexOf(medication);
+    if (index > -1) {
+        STATE.selectedMedications.splice(index, 1);
+    } else {
+        STATE.selectedMedications.push(medication);
+    }
+}
+
+function saveMedications() {
+    hideUnselected('medicationsContainer');
+    log('Medications saved', STATE.selectedMedications);
+}
+
+function proceedToProcedures() {
+    const allMed = [
+        ...STATE.selectedMedications,
+        ...getManualEntries('manualMedList')
+    ];
+
+    if (allMed.length === 0) {
+        alert('Please select or add at least one medication first.');
+        return;
+    }
+
+    STATE.selectedMedications = [...new Set(allMed)];
+    generateProcedures();
+}
+
+// ============================================================================
+// PROCEDURES
+// ============================================================================
+
+async function generateProcedures() {
+    const container = document.getElementById('proceduresContainer');
+    container.innerHTML = '<p class="empty-state">Generating procedures...</p>';
+
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-medications`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                selected: [...STATE.selectedMedications]
+            })
+        });
+
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
+        const data = await response.json();
+
+        container.innerHTML = '';
+
+        if (data.procedures?.length) {
+            data.procedures.forEach(proc => {
+                const name       = proc.name       || proc;
+                const indication = proc.indication || '';
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" onchange="toggleProcedure('${name.replace(/'/g, "\\'")}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${name}</div>
+                        ${indication ? `<div class="checkbox-detail">${indication}</div>` : ''}
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        } else {
+            container.innerHTML = '<p class="empty-state">No procedures returned. Add manually below.</p>';
+        }
+
+        const procBtn = document.getElementById('btnNextProc');
+        if (procBtn) {
+            procBtn.textContent = 'Procedures Generated ✓';
+            procBtn.disabled = true;
+            procBtn.style.backgroundColor = '#10b981';
+            procBtn.style.color = '#fff';
+        }
+
+        log('Procedures generated', data);
+    } catch (e) {
+        container.innerHTML = `<p class="empty-state" style="color:red;">Error: ${e.message}</p>`;
+        log('generateProcedures error', e);
+    }
+}
+
+function toggleProcedure(procedure) {
+    const index = STATE.selectedProcedures.indexOf(procedure);
+    if (index > -1) {
+        STATE.selectedProcedures.splice(index, 1);
+    } else {
+        STATE.selectedProcedures.push(procedure);
+    }
+}
+
+function saveProcedures() {
+    hideUnselected('proceduresContainer');
+    log('Procedures saved', STATE.selectedProcedures);
+}
+
+// ============================================================================
+// MANUAL ENTRIES
+// ============================================================================
+
+function addManualQA() {
+    const container = document.getElementById('manualQAList');
+    const item = document.createElement('div');
+    item.className = 'manual-qa-item';
+    item.innerHTML = `
+        <input type="text" placeholder="Enter your question..." data-type="question"/>
+        <input type="text" placeholder="Enter the answer..." data-type="answer"/>
+    `;
+    container.appendChild(item);
+}
+
+function addManualEntry(containerId, placeholder) {
+    const container = document.getElementById(containerId);
+    const item = document.createElement('div');
+    item.className = 'manual-entry-item';
+    item.innerHTML = `
+        <input type="text" placeholder="${placeholder}"/>
+        <button class="btn-remove" onclick="this.parentElement.remove()">×</button>
+    `;
+    container.appendChild(item);
+}
+
+function getManualEntries(containerId) {
+    const entries = [];
+    const inputs = document.querySelectorAll(`#${containerId} input`);
+    inputs.forEach(input => {
+        const val = input.value.trim();
+        if (val) entries.push(val);
+    });
+    return entries;
+}
+
+function addManualDiagnosis()     { addManualEntry('manualDiagList', 'Enter diagnosis...'); }
+function addManualInvestigation() { addManualEntry('manualInvList',  'Enter investigation...'); }
+function addManualMedication()    { addManualEntry('manualMedList',  'Enter medication...'); }
+function addManualProcedure()     { addManualEntry('manualProcList', 'Enter procedure...'); }
+
+// ============================================================================
+// SAVE / HIDE UNSELECTED
+// ============================================================================
+
+function hideUnselected(containerId) {
+    const container = document.getElementById(containerId);
+    const checkboxes = container.querySelectorAll('.checkbox-item');
+    checkboxes.forEach(item => {
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        if (checkbox && !checkbox.checked) {
+            item.classList.add('removing');
+            setTimeout(() => item.remove(), 300);
+        }
+    });
+}
+
+// ============================================================================
+// AI NOTES — streaming from 8004
+// ============================================================================
+
+async function generateNotes(section) {
+    const notesMap = {
+        'diagnosis':      'diagnosisNotes',
+        'investigations': 'investigationsNotes',
+        'medications':    'medicationsNotes',
+        'procedures':     'proceduresNotes',
+        'advice':         'adviceNotes'
+    };
+
+    const notesId = notesMap[section];
+    if (!notesId) return;
+
+    const notesArea = document.getElementById(notesId);
+
+    // Find the button that triggered this
+    const btn = event?.target || null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+
+    notesArea.value = '';
+
+    // Build context
+    const context = {
+        chief_complaint: (() => {
+            const chips = document.querySelectorAll('#chiefComplaintChips .chip');
+            return Array.from(chips).map(c => c.textContent.replace('×', '').trim()).join(', ');
+        })(),
+        diagnoses:      [...STATE.selectedDiagnoses, ...getManualEntries('manualDiagList')],
+        investigations: [...STATE.selectedInvestigations, ...getManualEntries('manualInvList')],
+        medications:    [...STATE.selectedMedications, ...getManualEntries('manualMedList')],
+        procedures:     [...STATE.selectedProcedures, ...getManualEntries('manualProcList')],
+    };
+
+    const payload = {
+        patient_id: STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID,
+        context,
+        section,
+        debug: false
+    };
+
+    try {
+        const response = await fetch(`${CONFIG.SUMMARY_API}/api/v1/generate-summary-stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (data.token) {
+                            notesArea.value += data.token;
+                            notesArea.scrollTop = notesArea.scrollHeight;
+                        }
+                        if (data.done && btn) {
+                            btn.textContent = 'Generated ✓';
+                            setTimeout(() => { btn.textContent = 'Generate AI Notes'; }, 2000);
+                        }
+                    } catch {}
+                }
+            }
+        }
+
+    } catch (e) {
+        notesArea.value = `Error: ${e.message}`;
+        if (btn) btn.textContent = 'Retry';
+        log('generateNotes error', e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ============================================================================
+// FORM ACTIONS
+// ============================================================================
+
+function saveDraft() {
+    const draft = {
+        patient: STATE.currentPatient?.name,
+        sessionId: STATE.sessionId,
+        diagnoses: STATE.selectedDiagnoses,
+        investigations: STATE.selectedInvestigations,
+        medications: STATE.selectedMedications,
+        procedures: STATE.selectedProcedures,
+        savedAt: new Date().toISOString()
+    };
+    console.log('Draft saved:', draft);
+    alert('Draft saved (check console for data).');
+}
+
+function issuePrescription() {
+    const rx = {
+        patient: STATE.currentPatient?.name,
+        diagnoses: [...STATE.selectedDiagnoses, ...getManualEntries('manualDiagList')],
+        investigations: [...STATE.selectedInvestigations, ...getManualEntries('manualInvList')],
+        medications: [...STATE.selectedMedications, ...getManualEntries('manualMedList')],
+        procedures: [...STATE.selectedProcedures, ...getManualEntries('manualProcList')],
+        advice: document.getElementById('adviceText').value,
+        followup: document.getElementById('followupDate').value,
+        issuedAt: new Date().toISOString()
+    };
+    console.log('Prescription issued:', rx);
+    alert(`Prescription issued for ${rx.patient || 'patient'}.\nDiagnoses: ${rx.diagnoses.join(', ') || 'none'}\nMedications: ${rx.medications.join(', ') || 'none'}`);
+}
+
+function cancel() {
+    if (confirm('Cancel this consultation? All unsaved data will be lost.')) {
+        clearForm();
+        document.getElementById('consultationForm').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+        STATE.currentPatient = null;
+        STATE.currentComplaint = null;
+    }
+}
+
+// ============================================================================
+// FINAL INIT
+// ============================================================================
+
+log('Clinical UI Initialized', { config: CONFIG });

@@ -1,0 +1,621 @@
+// ============================================================================
+// INITIALIZATION & UTILITY FUNCTIONS
+// ============================================================================
+
+function generateSessionId() {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+function log(message, data) {
+    console.log(`[Clinical UI] ${message}`, data || '');
+}
+
+// ============================================================================
+// PATIENT & ENCOUNTER MANAGEMENT
+// ============================================================================
+
+function newEncounter(patientKey) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    if (!patient) {
+        alert('Patient not found');
+        return;
+    }
+    
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = null;
+    STATE.sessionId = generateSessionId();
+    STATE.questions = [];
+    STATE.answers = [];
+    STATE.selectedDiagnoses = [];
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+    
+    // Update UI
+    document.getElementById('currentPatientName').textContent = patient.name;
+    document.getElementById('currentComplaint').textContent = 'New Consultation';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('consultationForm').style.display = 'block';
+    document.querySelector('.encounter-selector').style.display = 'none';
+    
+    // Clear form
+    clearForm();
+    
+    log('New encounter started', { patient: patient.name, sessionId: STATE.sessionId });
+}
+
+function loadEncounter(patientKey, complaintKey, encounterNum) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    const complaint = patient.complaints[complaintKey];
+    
+    if (!patient || !complaint) {
+        alert('Patient or complaint not found');
+        return;
+    }
+    
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = complaintKey;
+    STATE.sessionId = generateSessionId();
+    
+    // Update UI
+    document.getElementById('currentPatientName').textContent = patient.name;
+    document.getElementById('currentComplaint').textContent = `${complaint.name} - Encounter ${encounterNum} of ${complaint.visits}`;
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('consultationForm').style.display = 'block';
+    
+    // Show encounter selector if multiple visits
+    if (complaint.visits > 1) {
+        const selector = document.querySelector('.encounter-selector');
+        selector.style.display = 'flex';
+        
+        // Populate dropdown
+        const dropdown = document.getElementById('encounterDropdown');
+        dropdown.innerHTML = '';
+        for (let i = 1; i <= complaint.visits; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = `Encounter ${i}`;
+            if (i === encounterNum) option.selected = true;
+            dropdown.appendChild(option);
+        }
+    }
+    
+    // Pre-fill for demo (first encounter)
+    if (encounterNum === 1) {
+        document.getElementById('chiefComplaintInput').value = complaint.name;
+        addChiefComplaint();
+    }
+    
+    log('Loaded encounter', { patient: patient.name, complaint: complaint.name, encounter: encounterNum });
+}
+
+function switchEncounter() {
+    const encounterNum = parseInt(document.getElementById('encounterDropdown').value);
+    loadEncounter(STATE.currentPatient.id, STATE.currentComplaint, encounterNum);
+}
+
+function clearForm() {
+    document.getElementById('chiefComplaintChips').innerHTML = '';
+    document.getElementById('chiefComplaintInput').value = '';
+    document.getElementById('height').value = '';
+    document.getElementById('weight').value = '';
+    document.getElementById('headCirc').value = '';
+    document.getElementById('temp').value = '';
+    document.getElementById('bp').value = '';
+    document.getElementById('questionsContainer').innerHTML = '';
+    document.getElementById('diagnosisContainer').innerHTML = '<p class="empty-state">Answer questions to generate diagnoses</p>';
+    document.getElementById('investigationsContainer').innerHTML = '<p class="empty-state">Select diagnoses first</p>';
+    document.getElementById('medicationsContainer').innerHTML = '<p class="empty-state">Select investigations first</p>';
+    document.getElementById('proceduresContainer').innerHTML = '<p class="empty-state">Select medications first</p>';
+    document.getElementById('diagnosisNotes').value = '';
+    document.getElementById('investigationsNotes').value = '';
+    document.getElementById('medicationsNotes').value = '';
+    document.getElementById('proceduresNotes').value = '';
+    document.getElementById('adviceText').value = '';
+    document.getElementById('adviceNotes').value = '';
+}
+
+// ============================================================================
+// CHIEF COMPLAINT
+// ============================================================================
+
+function addChiefComplaint() {
+    const input = document.getElementById('chiefComplaintInput');
+    const complaint = input.value.trim();
+    
+    if (!complaint) return;
+    
+    const container = document.getElementById('chiefComplaintChips');
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = `
+        ${complaint}
+        <span class="chip-remove" onclick="removeChip(this)">×</span>
+    `;
+    container.appendChild(chip);
+    input.value = '';
+    
+    log('Added chief complaint', complaint);
+}
+
+function removeChip(element) {
+    element.parentElement.remove();
+}
+
+// Listen for Enter key on chief complaint input
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('chiefComplaintInput');
+    if (input) {
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                addChiefComplaint();
+            }
+        });
+    }
+});
+
+// ============================================================================
+// QUESTIONS GENERATION (Port 9000)
+// ============================================================================
+
+async function generateQuestions() {
+    const btn = document.getElementById('generateQuestionsBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    
+    // Get chief complaints
+    const chips = document.querySelectorAll('#chiefComplaintChips .chip');
+    const complaints = Array.from(chips).map(chip => chip.textContent.replace('×', '').trim());
+    
+    // Get vitals
+    const vitals = {
+        height: document.getElementById('height').value,
+        weight: document.getElementById('weight').value,
+        temp: document.getElementById('temp').value,
+        bp: document.getElementById('bp').value
+    };
+    
+    const complaint = complaints.join(', ') || 'General consultation';
+    const vitalsStr = `BP ${vitals.bp || 'N/A'}, Temp ${vitals.temp || 'N/A'}°C`;
+    
+    try {
+        // Start session with port 9000
+    console.log("Sending to /start:", JSON.stringify({
+        session_id: STATE.sessionId,
+        chief_complaint: complaint,
+        clinical_history: vitalsStr
+    }, null, 2));
+        const response = await fetch(`${CONFIG.TRIAGE_API}/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                chief_complaint: complaint,
+                clinical_history: vitalsStr
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to start session');
+        
+        const data = await response.json();
+        STATE.questions.push(data.question);
+        
+        renderQuestion(data.question, data.options, 0);
+        
+        btn.textContent = 'Questions Generated';
+        setTimeout(() => {
+            btn.style.display = 'none';
+        }, 1000);
+        
+        log('Generated first question', data);
+        
+    } catch (error) {
+        console.error('Error generating questions:', error);
+        alert('Failed to generate questions. Check if port 9000 is running.');
+        btn.disabled = false;
+        btn.textContent = 'Generate Questions';
+    }
+}
+
+function renderQuestion(question, options, index) {
+    const container = document.getElementById('questionsContainer');
+    
+    const questionDiv = document.createElement('div');
+    questionDiv.className = 'question-item';
+    questionDiv.id = `question-${index}`;
+    
+    const questionText = document.createElement('div');
+    questionText.className = 'question-text';
+    questionText.textContent = `Q${index + 1}: ${question}`;
+    
+    const optionsContainer = document.createElement('div');
+    optionsContainer.className = 'options-container';
+    
+    options.forEach(option => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.textContent = option;
+        btn.onclick = () => selectOption(index, option, btn);
+        optionsContainer.appendChild(btn);
+    });
+    
+    questionDiv.appendChild(questionText);
+    questionDiv.appendChild(optionsContainer);
+    container.appendChild(questionDiv);
+}
+
+async function selectOption(questionIndex, answer, btnElement) {
+    // Mark button as selected
+    const allBtns = btnElement.parentElement.querySelectorAll(".option-btn");
+    allBtns.forEach(b => b.classList.remove("selected"));
+    btnElement.classList.add("selected");
+    
+    STATE.answers[questionIndex] = answer;
+    
+    log(`Answered Q${questionIndex + 1}`, answer);
+    
+    // Replace options with the selected answer display
+    const questionDiv = document.getElementById(`question-${questionIndex}`);
+    const optionsContainer = questionDiv.querySelector(".options-container");
+    optionsContainer.innerHTML = `<div style="color: #10b981; font-weight: 500;">u2713 Answer: ${answer}</div>`;
+    
+    // Check if we have more questions to generate (max 5)
+    if (STATE.questions.length < 5) {
+        await getNextQuestion();
+    } else if (STATE.questions.length === 5 && STATE.answers.length === 5) {
+        // All questions answered, enable diagnosis generation
+        document.getElementById("generateDiagnosisBtn").style.display = "block";
+        await generateDiagnoses();
+    }
+}
+
+async function getNextQuestion() {
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                answer: STATE.answers[STATE.answers.length - 1]
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to get next question');
+        
+        const data = await response.json();
+        
+        if (data.question) {
+            STATE.questions.push(data.question);
+            renderQuestion(data.question, data.options, STATE.questions.length - 1);
+        }
+        
+        // If we've reached 5 questions and all are answered
+        if (STATE.questions.length === 5 && STATE.answers.length === 5) {
+            document.getElementById('generateDiagnosisBtn').style.display = 'block';
+            await generateDiagnoses();
+        }
+        
+    } catch (error) {
+        console.error('Error getting next question:', error);
+    }
+}
+
+// ============================================================================
+// DIAGNOSIS GENERATION (Port 9000)
+// ============================================================================
+
+async function generateDiagnoses() {
+    const container = document.getElementById('diagnosisContainer');
+    container.innerHTML = '<p class="empty-state">Generating diagnoses...</p>';
+    
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                answer: STATE.answers[STATE.answers.length - 1]
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to generate diagnoses');
+        
+        const data = await response.json();
+        
+        if (data.considerations && data.considerations.length > 0) {
+            container.innerHTML = '';
+            data.considerations.forEach(diag => {
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" id="diag-${diag.name}" onchange="toggleDiagnosis('${diag.name}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${diag.name}</div>
+                        <div class="checkbox-detail">Likelihood: ${diag.likelihood}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+            
+            log('Diagnoses generated', data.considerations);
+        }
+        
+    } catch (error) {
+        console.error('Error generating diagnoses:', error);
+        container.innerHTML = '<p class="empty-state">Failed to generate diagnoses</p>';
+    }
+}
+
+function toggleDiagnosis(diagnosis) {
+    const index = STATE.selectedDiagnoses.indexOf(diagnosis);
+    if (index > -1) {
+        STATE.selectedDiagnoses.splice(index, 1);
+    } else {
+        STATE.selectedDiagnoses.push(diagnosis);
+    }
+    
+    log('Diagnosis toggled', { diagnosis, selected: STATE.selectedDiagnoses });
+    
+    // If diagnoses selected, generate investigations
+    if (STATE.selectedDiagnoses.length > 0) {
+        generateInvestigations();
+    }
+}
+
+// ============================================================================
+// INVESTIGATIONS, MEDICATIONS, PROCEDURES (Port 9000)
+// ============================================================================
+
+async function generateInvestigations() {
+    const container = document.getElementById('investigationsContainer');
+    container.innerHTML = '<p class="empty-state">Generating investigations...</p>';
+    
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-diagnoses`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                diagnoses: STATE.selectedDiagnoses
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to generate investigations');
+        
+        const data = await response.json();
+        
+        if (data.investigations && data.investigations.length > 0) {
+            container.innerHTML = '';
+            data.investigations.forEach(inv => {
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" id="inv-${inv.name}" onchange="toggleInvestigation('${inv.name}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${inv.name}</div>
+                        <div class="checkbox-detail">${inv.reason || ''}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error generating investigations:', error);
+        container.innerHTML = '<p class="empty-state">Failed to generate investigations</p>';
+    }
+}
+
+function toggleInvestigation(investigation) {
+    const index = STATE.selectedInvestigations.indexOf(investigation);
+    if (index > -1) {
+        STATE.selectedInvestigations.splice(index, 1);
+    } else {
+        STATE.selectedInvestigations.push(investigation);
+    }
+    
+    if (STATE.selectedInvestigations.length > 0) {
+        generateMedications();
+    }
+}
+
+async function generateMedications() {
+    const container = document.getElementById('medicationsContainer');
+    container.innerHTML = '<p class="empty-state">Generating medications...</p>';
+    
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-investigations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                investigations: STATE.selectedInvestigations
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to generate medications');
+        
+        const data = await response.json();
+        
+        if (data.medications && data.medications.length > 0) {
+            container.innerHTML = '';
+            data.medications.forEach(med => {
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" id="med-${med.name}" onchange="toggleMedication('${med.name}')">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${med.name}</div>
+                        <div class="checkbox-detail">${med.dose || ''} - ${med.route || ''}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error generating medications:', error);
+        container.innerHTML = '<p class="empty-state">Failed to generate medications</p>';
+    }
+}
+
+function toggleMedication(medication) {
+    const index = STATE.selectedMedications.indexOf(medication);
+    if (index > -1) {
+        STATE.selectedMedications.splice(index, 1);
+    } else {
+        STATE.selectedMedications.push(medication);
+    }
+    
+    if (STATE.selectedMedications.length > 0) {
+        generateProcedures();
+    }
+}
+
+async function generateProcedures() {
+    const container = document.getElementById('proceduresContainer');
+    container.innerHTML = '<p class="empty-state">Generating procedures...</p>';
+    
+    try {
+        const response = await fetch(`${CONFIG.TRIAGE_API}/select-medications`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: STATE.sessionId,
+                medications: STATE.selectedMedications
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to generate procedures');
+        
+        const data = await response.json();
+        
+        if (data.procedures && data.procedures.length > 0) {
+            container.innerHTML = '';
+            data.procedures.forEach(proc => {
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `
+                    <input type="checkbox" id="proc-${proc.name}">
+                    <div class="checkbox-content">
+                        <div class="checkbox-label">${proc.name}</div>
+                        <div class="checkbox-detail">${proc.indication || ''}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error generating procedures:', error);
+        container.innerHTML = '<p class="empty-state">Failed to generate procedures</p>';
+    }
+}
+
+// ============================================================================
+// AI NOTES GENERATION (Port 8004 with Streaming)
+// ============================================================================
+
+async function generateNotes(section) {
+    const textarea = document.getElementById(`${section}Notes`);
+    textarea.value = 'Streaming...';
+    
+    // Build context
+    const chips = document.querySelectorAll('#chiefComplaintChips .chip');
+    const complaints = Array.from(chips).map(chip => chip.textContent.replace('×', '').trim());
+    
+    const context = {
+        chief_complaint: complaints.join(', '),
+        vitals: document.getElementById('bp').value,
+        questions: STATE.questions.map((q, i) => ({
+            question: q,
+            answer: STATE.answers[i] || ''
+        })),
+        diagnoses: STATE.selectedDiagnoses,
+        investigations: STATE.selectedInvestigations,
+        medications: STATE.selectedMedications,
+        procedures: STATE.selectedProcedures
+    };
+    
+    const payload = {
+        patient_id: STATE.currentPatient.id,
+        context: context,
+        section: section,
+        debug: false
+    };
+    
+    try {
+        const response = await fetch(`${CONFIG.SUMMARY_API}/api/v1/generate-summary-stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) throw new Error('Failed to generate notes');
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        textarea.value = '';
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.token) {
+                            textarea.value += data.token;
+                            textarea.scrollTop = textarea.scrollHeight;
+                        }
+                        
+                        if (data.done) {
+                            log(`Notes generated for ${section}`, { chars: textarea.value.length });
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse SSE line:', line);
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error generating notes:', error);
+        textarea.value = 'Failed to generate notes. Check if port 8004 is running.';
+    }
+}
+
+// ============================================================================
+// FORM ACTIONS
+// ============================================================================
+
+function saveDraft() {
+    alert('Draft saved! (This is a demo - no actual save)');
+    log('Draft saved', STATE);
+}
+
+function issuePrescription() {
+    alert('Prescription issued! (This is a demo)');
+    log('Prescription issued', STATE);
+}
+
+function cancel() {
+    if (confirm('Cancel consultation? Unsaved changes will be lost.')) {
+        document.getElementById('emptyState').style.display = 'flex';
+        document.getElementById('consultationForm').style.display = 'none';
+        STATE.currentPatient = null;
+    }
+}
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+log('Clinical UI Initialized', { config: CONFIG });

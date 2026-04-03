@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor Portal - Clinical Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Left Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>Doctor Portal</h2>
+            <p class="subtitle">Healthcare Management</p>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item">Dashboard</a>
+            <a href="#" class="nav-item">Appointments</a>
+            <a href="#" class="nav-item">Registration</a>
+            <a href="#" class="nav-item">OPD Billing</a>
+            
+            <div class="nav-item active patients-section">
+                <span>Patients</span>
+                <div class="patient-list">
+                    <div class="patient-item" data-patient="yolanda">
+                        <span class="patient-name">Yolanda Delrío</span>
+                        <div class="complaint-popup">
+                            <div class="complaint-item" onclick="loadEncounter('yolanda', 'fever', 1)">
+                                🌡️ Fever (7 visits)
+                            </div>
+                            <div class="complaint-item" onclick="loadEncounter('yolanda', 'cough', 1)">
+                                😷 Cough (3 visits)
+                            </div>
+                            <div class="complaint-item new" onclick="newEncounter('yolanda')">
+                                ➕ New Complaint
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="patient-item" data-patient="dorene">
+                        <span class="patient-name">Dorene Smith</span>
+                        <div class="complaint-popup">
+                            <div class="complaint-item" onclick="loadEncounter('dorene', 'headache', 1)">
+                                🤕 Headache (2 visits)
+                            </div>
+                            <div class="complaint-item new" onclick="newEncounter('dorene')">
+                                ➕ New Complaint
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <a href="#" class="nav-item">Vitals</a>
+            <a href="#" class="nav-item">Consultations</a>
+            <a href="#" class="nav-item">Vaccinations</a>
+            <a href="#" class="nav-item">Rx Settings</a>
+            <a href="#" class="nav-item">Profile</a>
+        </nav>
+        
+        <button class="sign-out">Sign Out</button>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="patient-info">
+                <h1 id="currentPatientName">Select a patient</h1>
+                <p id="currentComplaint"></p>
+            </div>
+            <div class="encounter-selector" style="display: none;">
+                <label>View Encounter:</label>
+                <select id="encounterDropdown" onchange="switchEncounter()">
+                    <option value="1">Encounter 1</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Consultation Form -->
+        <div class="consultation-form" id="consultationForm" style="display: none;">
+            
+            <!-- Chief Complaint -->
+            <section class="form-section">
+                <h3>Chief Complaint</h3>
+                <div class="chip-container" id="chiefComplaintChips"></div>
+                <input type="text" id="chiefComplaintInput" placeholder="+ Add another complaint..." class="input-field">
+            </section>
+
+            <!-- Vitals -->
+            <section class="form-section">
+                <h3>Vitals & Measurements</h3>
+                <div class="vitals-grid">
+                    <div class="vital-item">
+                        <label>Height (cm)</label>
+                        <input type="number" id="height" class="input-field-small">
+                    </div>
+                    <div class="vital-item">
+                        <label>Weight (kg)</label>
+                        <input type="number" id="weight" class="input-field-small">
+                    </div>
+                    <div class="vital-item">
+                        <label>Head circ</label>
+                        <input type="number" id="headCirc" class="input-field-small">
+                    </div>
+                    <div class="vital-item">
+                        <label>Temp (°C)</label>
+                        <input type="number" id="temp" class="input-field-small">
+                    </div>
+                    <div class="vital-item">
+                        <label>BP (mmHg)</label>
+                        <input type="text" id="bp" placeholder="120/80" class="input-field-small">
+                    </div>
+                </div>
+            </section>
+
+            <!-- Questions -->
+            <section class="form-section">
+                <h3>Key Questions</h3>
+                <div id="questionsContainer"></div>
+
+                <!-- Manual Q&A Section -->
+                <div class="manual-qa-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label style="font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase;">Add Custom Questions</label>
+                        <button class="btn-secondary" onclick="addManualQA()">+ Add Question</button>
+                    </div>
+                    <div id="manualQAList"></div>
+                </div>
+                <button id="generateQuestionsBtn" class="btn-primary" onclick="generateQuestions()">
+                    Generate Questions
+                </button>
+            </section>
+
+            <!-- Diagnosis -->
+            <section class="form-section">
+                <h3>Diagnosis</h3>
+                <div id="diagnosisContainer">
+                <button class="btn-primary" id="btnNextInv" onclick="proceedToInvestigations()" style="margin-top: 20px; display: none;">Next: Investigations →</button>
+                </div>
+
+                <!-- Manual Diagnosis Entry -->
+                <div class="manual-entry-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label style="font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase;">Add Custom Diagnosis</label>
+                        <button class="btn-secondary" onclick="addManualDiagnosis()">+ Add</button>
+                    </div>
+                    <div id="manualDiagList"></div>
+                    <p class="empty-state">Answer questions to generate diagnoses</p>
+                </div>
+                <button id="generateDiagnosisBtn" class="btn-secondary" onclick="generateDiagnoses()" style="display:none;">
+                    Generate Diagnoses
+                </button>
+                <div class="ai-notes">
+                    <button class="btn-ai" onclick="generateNotes('diagnosis')">Generate AI Notes</button>
+                    <textarea id="diagnosisNotes" placeholder="AI-generated clinical notes will appear here..." rows="4"></textarea>
+                </div>
+            </section>
+
+            <!-- Investigations -->
+            <section class="form-section">
+                <h3>Investigations</h3>
+                <div id="investigationsContainer">
+                <button class="btn-primary" id="btnNextMed" onclick="proceedToMedications()" style="margin-top: 20px; display: none;">Next: Medications →</button>
+                </div>
+
+                <!-- Manual Investigation Entry -->
+                <div class="manual-entry-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label style="font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase;">Add Custom Investigation</label>
+                        <button class="btn-secondary" onclick="addManualInvestigation()">+ Add</button>
+                    </div>
+                    <div id="manualInvList"></div>
+                    <p class="empty-state">Select diagnoses first</p>
+                </div>
+                <div class="ai-notes">
+                    <button class="btn-ai" onclick="generateNotes('investigations')">Generate AI Notes</button>
+                    <textarea id="investigationsNotes" placeholder="AI-generated notes..." rows="4"></textarea>
+                </div>
+            </section>
+
+            <!-- Medications -->
+            <section class="form-section">
+                <h3>Medications</h3>
+                <div id="medicationsContainer">
+                <button class="btn-primary" id="btnNextProc" onclick="proceedToProcedures()" style="margin-top: 20px; display: none;">Next: Procedures →</button>
+                </div>
+
+                <!-- Manual Medication Entry -->
+                <div class="manual-entry-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label style="font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase;">Add Custom Medication</label>
+                        <button class="btn-secondary" onclick="addManualMedication()">+ Add</button>
+                    </div>
+                    <div id="manualMedList"></div>
+                    <p class="empty-state">Select investigations first</p>
+                </div>
+                <div class="ai-notes">
+                    <button class="btn-ai" onclick="generateNotes('medications')">Generate AI Notes</button>
+                    <textarea id="medicationsNotes" placeholder="AI-generated notes..." rows="4"></textarea>
+                </div>
+            </section>
+
+            <!-- Procedures -->
+            <section class="form-section">
+                <h3>Procedures</h3>
+                <div id="proceduresContainer">
+                </div>
+
+                <!-- Manual Procedure Entry -->
+                <div class="manual-entry-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label style="font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase;">Add Custom Procedure</label>
+                        <button class="btn-secondary" onclick="addManualProcedure()">+ Add</button>
+                    </div>
+                    <div id="manualProcList"></div>
+                    <p class="empty-state">Select medications first</p>
+                </div>
+                <div class="ai-notes">
+                    <button class="btn-ai" onclick="generateNotes('procedures')">Generate AI Notes</button>
+                    <textarea id="proceduresNotes" placeholder="AI-generated notes..." rows="4"></textarea>
+                </div>
+            </section>
+
+            <!-- Advice & Follow-up -->
+            <section class="form-section">
+                <h3>Advice & Follow-up</h3>
+                <textarea id="adviceText" placeholder="Enter general advice..." rows="3" class="input-field"></textarea>
+                <div class="followup-date">
+                    <label>Follow-up Date</label>
+                    <input type="date" id="followupDate" class="input-field">
+                </div>
+                <div class="ai-notes">
+                    <button class="btn-ai" onclick="generateNotes('advice')">Generate AI Notes</button>
+                    <textarea id="adviceNotes" placeholder="AI-generated advice..." rows="4"></textarea>
+                </div>
+            </section>
+
+            <!-- Action Buttons -->
+            <div class="form-actions">
+                <button class="btn-primary" onclick="saveDraft()">Save Draft</button>
+                <button class="btn-success" onclick="issuePrescription()">Issue Prescription</button>
+                <button class="btn-secondary" onclick="cancel()">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div class="empty-consultation" id="emptyState">
+            <h2>👈 Select a patient to begin consultation</h2>
+            <p>Choose a patient from the sidebar or click "New Complaint" to start</p>
+        </div>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
