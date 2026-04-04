@@ -63,6 +63,13 @@ async function newComplaint(patientKey) {
 
     renderEncounterTabs();
     startNewEncounter();
+    // Reset prescription button
+    const rxBtn = document.querySelector('.btn-success');
+    if (rxBtn) {
+        rxBtn.disabled = false;
+        rxBtn.textContent = 'Issue Prescription';
+        rxBtn.style.backgroundColor = '';
+    }
 }
 
 // ============================================================================
@@ -281,6 +288,14 @@ function startNewEncounter() {
         `${STATE.currentComplaint || 'New Complaint'} — New Visit (${visitNum})`;
 
     clearFormFields();
+    // Reset prescription button
+    const rxBtn = document.querySelector('.btn-success');
+    if (rxBtn) {
+        rxBtn.disabled = false;
+        rxBtn.textContent = 'Issue Prescription';
+        rxBtn.style.backgroundColor = '';
+    }
+
 
     if (STATE.currentComplaint) {
         document.getElementById('chiefComplaintInput').value = STATE.currentComplaint;
