@@ -10,6 +10,19 @@ function log(message, data) {
     console.log(`[Clinical UI] ${message}`, data || '');
 }
 
+
+
+
+
+function resolveComplaintChain(chiefComplaintText) {
+    const fromState = (STATE.currentComplaintSlug || "").trim();
+    if (fromState) return fromState;
+
+    const fromInput = (document.getElementById("complaintChainInput")?.value || "").trim();
+    if (fromInput) return fromInput;
+
+    return (chiefComplaintText || "").trim();
+}
 // ============================================================================
 // SIDEBAR — Patient complaint click → fetch history from Redis
 // ============================================================================
@@ -406,10 +419,11 @@ function showComplaintChainInput() {
 }
 
 function onComplaintChainInput(inputEl) {
-    const slug = inputEl.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    inputEl.value = slug;
-    STATE.currentComplaintSlug = slug;
-    document.getElementById('complaintChainPreview').textContent = slug ? `Chain: "${slug}"` : '';
+    const raw = inputEl.value.trim();
+    STATE.currentComplaintSlug = raw;
+
+    document.getElementById("complaintChainPreview").textContent =
+        raw ? `Chain: "${raw}"` : "";
 }
 
 // ============================================================================
@@ -475,14 +489,18 @@ async function generateQuestions() {
     document.getElementById('questionsContainer').innerHTML = '<p class="empty-state">Calling triage engine...</p>';
 
     try {
+        const complaintChain = resolveComplaintChain(chiefComplaint);
+
         const res = await fetch(`${CONFIG.TRIAGE_API}/start`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chief_complaint:  chiefComplaint,
-                clinical_history: clinicalHistory,
-                patient_id:       STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID,
-            })
-        });
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chief_complaint:  chiefComplaint,
+            complaint_chain:  complaintChain,
+            clinical_history: clinicalHistory,
+            patient_id:       STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID,
+        })
+    });
         if (!res.ok) throw new Error(`Server error ${res.status}`);
         const data = await res.json();
 
@@ -849,9 +867,19 @@ async function issuePrescription() {
     const allProc = [...STATE.selectedProcedures,     ...getManualEntries('manualProcList')];
     const btn = document.querySelector('.btn-success');
 
+    // Auto-derive slug from first chief complaint chip if slug not already set
+        if (!STATE.currentComplaintSlug) {
+        const autoChips = [...document.querySelectorAll("#chiefComplaintChips .chip")]
+            .map(c => c.textContent.replace("×", "").trim())
+            .filter(Boolean);
+
+        if (autoChips.length > 0) {
+            STATE.currentComplaintSlug = autoChips[0];
+        }
+        }
+
     if (!STATE.currentPatient) { alert('No patient selected.'); return; }
-    if (!STATE.currentComplaintSlug) { alert('Please select a complaint chain or type a new one'); return; }
-    if (STATE.currentComplaintSlug.includes(' ')) { alert('Please use hyphens in the complaint chain slug'); return; }
+    if (!STATE.currentComplaintSlug) { alert('Please add a chief complaint first.'); return; }
     if (!chiefComplaints.length) { alert('Please add at least one chief complaint'); return; }
 
     const payload = {
