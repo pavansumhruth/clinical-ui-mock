@@ -14,25 +14,67 @@ function log(message, data) {
 // SIDEBAR — Patient complaint click → fetch history from Redis
 // ============================================================================
 
-async function openComplaint(patientKey, complaintName) {
+async function loadPatientComplaints(patientKey) {
+    const patient = CONFIG.PATIENTS[patientKey];
+    if (!patient) return;
+
+    const popup = document.getElementById(`complaints-${patientKey}`);
+    if (!popup || popup.dataset.loaded === 'true') return;
+
+    popup.innerHTML = '<div class="complaint-item">Loading complaints...</div>';
+
+    try {
+        const res = await fetch(`${CONFIG.REDIS_API}/api/v1/patient/${patient.id}/complaints`);
+        const complaints = res.ok ? await res.json() : [];
+
+        popup.innerHTML = '';
+
+        (complaints || []).forEach((item) => {
+            const complaintItem = document.createElement('div');
+            complaintItem.className = 'complaint-item';
+            complaintItem.textContent = `${item.display_name} (${item.visit_count} visits)`;
+            complaintItem.onclick = () => openComplaintChain(patientKey, item.display_name, item.chain_slug);
+            popup.appendChild(complaintItem);
+        });
+
+        const newComplaintItem = document.createElement('div');
+        newComplaintItem.className = 'complaint-item new';
+        newComplaintItem.textContent = 'New Complaint';
+        newComplaintItem.onclick = () => startNewComplaint(patientKey);
+        popup.appendChild(newComplaintItem);
+
+        popup.dataset.loaded = 'true';
+    } catch (e) {
+        popup.innerHTML = '';
+        const newComplaintItem = document.createElement('div');
+        newComplaintItem.className = 'complaint-item new';
+        newComplaintItem.textContent = 'New Complaint';
+        newComplaintItem.onclick = () => startNewComplaint(patientKey);
+        popup.appendChild(newComplaintItem);
+        log('Could not load complaints', e);
+    }
+}
+
+async function openComplaintChain(patientKey, displayName, chainSlug) {
     const patient = CONFIG.PATIENTS[patientKey];
     if (!patient) return;
 
     STATE.currentPatient     = patient;
-    STATE.currentComplaint   = complaintName;
+    STATE.currentComplaint   = displayName;
+    STATE.currentComplaintSlug = chainSlug;
     STATE.encounterHistory   = [];
     STATE.viewMode           = false;
     STATE.currentEncounterId = null;
 
     document.getElementById('currentPatientName').textContent = patient.name;
-    document.getElementById('currentComplaint').textContent   = complaintName;
+    document.getElementById('currentComplaint').textContent   = displayName;
     document.getElementById('emptyState').style.display       = 'none';
     document.getElementById('consultationForm').style.display = 'block';
+    document.getElementById('complaintChainSection').style.display = 'none';
 
-    // Fetch complaint chain from Redis
     try {
         const res = await fetch(
-            `${CONFIG.REDIS_API}/api/v1/patient/${patient.id}/complaint?complaint=${encodeURIComponent(complaintName)}&limit=20`
+            `${CONFIG.REDIS_API}/api/v1/patient/${patient.id}/complaint?complaint=${encodeURIComponent(chainSlug)}&limit=20`
         );
         if (res.ok) {
             STATE.encounterHistory = await res.json();
@@ -46,12 +88,13 @@ async function openComplaint(patientKey, complaintName) {
     startNewEncounter();
 }
 
-async function newComplaint(patientKey) {
+function startNewComplaint(patientKey) {
     const patient = CONFIG.PATIENTS[patientKey];
     if (!patient) return;
 
     STATE.currentPatient     = patient;
     STATE.currentComplaint   = null;
+    STATE.currentComplaintSlug = null;
     STATE.encounterHistory   = [];
     STATE.viewMode           = false;
     STATE.currentEncounterId = null;
@@ -63,13 +106,6 @@ async function newComplaint(patientKey) {
 
     renderEncounterTabs();
     startNewEncounter();
-    // Reset prescription button
-    const rxBtn = document.querySelector('.btn-success');
-    if (rxBtn) {
-        rxBtn.disabled = false;
-        rxBtn.textContent = 'Issue Prescription';
-        rxBtn.style.backgroundColor = '';
-    }
 }
 
 // ============================================================================
@@ -282,6 +318,9 @@ function startNewEncounter() {
     STATE.selectedInvestigations = [];
     STATE.selectedMedications    = [];
     STATE.selectedProcedures     = [];
+    if (!STATE.currentComplaint) {
+        STATE.currentComplaintSlug = null;
+    }
 
     const visitNum = STATE.encounterHistory.length + 1;
     document.getElementById('currentComplaint').textContent =
@@ -344,6 +383,8 @@ function clearFormFields() {
     document.getElementById('adviceText').value          = '';
     document.getElementById('adviceNotes').value         = '';
     document.getElementById('followupDate').value        = '';
+    document.getElementById('complaintChainInput').value = '';
+    document.getElementById('complaintChainPreview').textContent = '';
 
     document.getElementById('manualQAList').innerHTML   = '';
     document.getElementById('manualDiagList').innerHTML = '';
@@ -355,6 +396,20 @@ function clearFormFields() {
         const b = document.getElementById(id);
         if (b) { b.style.display = 'none'; b.disabled = false; b.textContent = id === 'btnNextInv' ? 'Next: Investigations →' : id === 'btnNextMed' ? 'Next: Medications →' : 'Next: Procedures →'; b.style.backgroundColor = ''; b.style.color = ''; }
     });
+}
+
+function showComplaintChainInput() {
+    document.getElementById('complaintChainSection').style.display = 'block';
+    document.getElementById('complaintChainInput').value = '';
+    document.getElementById('complaintChainPreview').textContent = '';
+    STATE.currentComplaintSlug = null;
+}
+
+function onComplaintChainInput(inputEl) {
+    const slug = inputEl.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    inputEl.value = slug;
+    STATE.currentComplaintSlug = slug;
+    document.getElementById('complaintChainPreview').textContent = slug ? `Chain: "${slug}"` : '';
 }
 
 // ============================================================================
@@ -792,46 +847,50 @@ async function issuePrescription() {
     const allInv  = [...STATE.selectedInvestigations, ...getManualEntries('manualInvList')];
     const allMeds = [...STATE.selectedMedications,    ...getManualEntries('manualMedList')];
     const allProc = [...STATE.selectedProcedures,     ...getManualEntries('manualProcList')];
+    const btn = document.querySelector('.btn-success');
 
-    if (!STATE.currentPatient)        { alert('No patient selected.'); return; }
-    if (!chiefComplaints.length)      { alert('No chief complaint.'); return; }
+    if (!STATE.currentPatient) { alert('No patient selected.'); return; }
+    if (!STATE.currentComplaintSlug) { alert('Please select a complaint chain or type a new one'); return; }
+    if (STATE.currentComplaintSlug.includes(' ')) { alert('Please use hyphens in the complaint chain slug'); return; }
+    if (!chiefComplaints.length) { alert('Please add at least one chief complaint'); return; }
 
     const payload = {
-        patient_id:       STATE.currentPatient.id,
-        visit_date:       new Date().toISOString().split('T')[0],
-        chief_complaints: chiefComplaints,
+        patient_id:              STATE.currentPatient.id,
+        complaint_chain:         STATE.currentComplaintSlug,
+        visit_date:              new Date().toISOString().split('T')[0],
+        chief_complaints:        chiefComplaints,
         vitals: {
             height_cm:    parseFloat(document.getElementById('height').value)   || null,
             weight_kg:    parseFloat(document.getElementById('weight').value)   || null,
             head_circ_cm: parseFloat(document.getElementById('headCirc').value) || null,
             temp_celsius: parseFloat(document.getElementById('temp').value)     || null,
-            bp_mmhg:      document.getElementById('bp').value || null
+            bp_mmhg:      document.getElementById('bp').value || null,
         },
-        key_questions:          STATE.questions.filter(q => q.answer).map(q => ({ question: q.question, answer: q.answer })),
-        key_questions_ai_notes: '',
-        diagnoses:              allDx.map(d   => ({ name: d, selected: true, is_custom: false })),
-        diagnoses_ai_notes:     document.getElementById('diagnosisNotes').value || '',
-        investigations:         allInv.map(i  => ({ name: i, selected: true, is_custom: false })),
-        investigations_ai_notes: '',
-        medications:            allMeds.map(m => ({ name: m, selected: true, is_custom: false })),
-        medications_ai_notes:   document.getElementById('medicationsNotes')?.value || '',
-        procedures:             allProc.map(p => ({ name: p, selected: true, is_custom: false })),
-        procedures_ai_notes:    '',
-        advice:                 document.getElementById('adviceText').value || '',
-        follow_up_date:         document.getElementById('followupDate').value || null,
-        advice_ai_notes:        document.getElementById('adviceNotes').value || '',
-        session_id: STATE.sessionId,  // add this field
+        key_questions:           STATE.questions.map((q, i) => ({ question: q.question || q, answer: STATE.answers[i] || q.answer || '' })),
+        key_questions_ai_notes:  '',
+        diagnoses:               allDx.map(d => ({ name: d, selected: true, is_custom: false })),
+        diagnoses_ai_notes:      document.getElementById('diagnosisNotes').value || '',
+        investigations:          allInv.map(i => ({ name: i, selected: true, is_custom: false })),
+        investigations_ai_notes: document.getElementById('investigationsNotes').value || '',
+        medications:             allMeds.map(m => ({ name: m, selected: true, is_custom: false })),
+        medications_ai_notes:    document.getElementById('medicationsNotes').value || '',
+        procedures:              allProc.map(p => ({ name: p, selected: true, is_custom: false })),
+        procedures_ai_notes:     document.getElementById('proceduresNotes').value || '',
+        advice:                  document.getElementById('adviceText').value || '',
+        follow_up_date:          document.getElementById('followupDate').value || null,
+        advice_ai_notes:         document.getElementById('adviceNotes').value || '',
     };
 
-    const btn = document.querySelector('.btn-success');
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
         const res = await fetch(`${CONFIG.REDIS_API}/api/v1/consultation`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
-        if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`); }
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
         const saved = await res.json();
-        // Only add if not already in history
         const exists = STATE.encounterHistory.find(e => e.consultation_id === saved.consultation_id);
         if (!exists) {
             STATE.encounterHistory.push(saved);
@@ -839,11 +898,15 @@ async function issuePrescription() {
         }
         renderEncounterTabs();
 
-        if (btn) { btn.textContent = 'Prescription Issued ✓'; btn.style.backgroundColor = '#10b981'; }
-        alert(`Consultation saved!\nVisit ${saved.visit_number} — ${saved.visit_date}\nDiagnoses: ${allDx.join(', ') || 'none'}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Prescription Issued ✓';
+            btn.style.backgroundColor = '#10b981';
+            btn.style.color = '#fff';
+        }
         log('Saved', saved.consultation_id);
     } catch (e) {
-        alert(`Failed: ${e.message}`);
+        alert(e.message || 'Save failed');
         if (btn) { btn.disabled = false; btn.textContent = 'Issue Prescription'; }
     }
 }
@@ -861,10 +924,12 @@ function cancel() {
     if (confirm('Cancel this consultation?')) {
         document.getElementById('consultationForm').style.display = 'none';
         document.getElementById('emptyState').style.display       = 'flex';
+        document.getElementById('complaintChainSection').style.display = 'none';
         const bar = document.getElementById('encounterTabBar');
         if (bar) bar.remove();
         STATE.currentPatient   = null;
         STATE.currentComplaint = null;
+        STATE.currentComplaintSlug = null;
         STATE.encounterHistory = [];
     }
 }
@@ -873,12 +938,12 @@ function cancel() {
 // LEGACY COMPATIBILITY — index.html calls these
 // ============================================================================
 
-function loadEncounter(patientKey, complaintKey) {
-    const nameMap = { fever: 'Fever', cough: 'Cough', headache: 'Headache' };
-    openComplaint(patientKey, nameMap[complaintKey] || complaintKey);
+function loadEncounter(patientKey, complaintKey, encounterNum) {
+    openComplaintChain(patientKey, complaintKey, complaintKey);
 }
 
-function newEncounter(patientKey) { newComplaint(patientKey); }
+function newEncounter(patientKey) { startNewComplaint(patientKey); }
+function newComplaint(patientKey) { startNewComplaint(patientKey); }
 function switchEncounter()        { /* replaced by tabs */ }
 function clearForm()              { clearFormFields(); }
 

@@ -23,31 +23,14 @@
             <div class="nav-item active patients-section">
                 <span>Patients</span>
                 <div class="patient-list">
-                    <div class="patient-item" data-patient="yolanda">
+                    <div class="patient-item" data-patient="yolanda" onmouseenter="loadPatientComplaints('yolanda')">
                         <span class="patient-name">Yolanda Delrío</span>
-                        <div class="complaint-popup">
-                            <div class="complaint-item" onclick="loadEncounter('yolanda', 'fever', 1)">
-                                🌡️ Fever (7 visits)
-                            </div>
-                            <div class="complaint-item" onclick="loadEncounter('yolanda', 'cough', 1)">
-                                😷 Cough (3 visits)
-                            </div>
-                            <div class="complaint-item new" onclick="newEncounter('yolanda')">
-                                ➕ New Complaint
-                            </div>
-                        </div>
+                        <div class="complaint-popup" id="complaints-yolanda"></div>
                     </div>
                     
-                    <div class="patient-item" data-patient="dorene">
+                    <div class="patient-item" data-patient="dorene" onmouseenter="loadPatientComplaints('dorene')">
                         <span class="patient-name">Dorene Smith</span>
-                        <div class="complaint-popup">
-                            <div class="complaint-item" onclick="loadEncounter('dorene', 'headache', 1)">
-                                🤕 Headache (2 visits)
-                            </div>
-                            <div class="complaint-item new" onclick="newEncounter('dorene')">
-                                ➕ New Complaint
-                            </div>
-                        </div>
+                        <div class="complaint-popup" id="complaints-dorene"></div>
                     </div>
                 </div>
             </div>
@@ -84,6 +67,16 @@
             <!-- Chief Complaint -->
             <section class="form-section">
                 <h3>Chief Complaint</h3>
+                <div id="complaintChainSection" style="display:none; margin-bottom:16px;">
+                    <label style="font-size:13px; color:#64748b; display:block; margin-bottom:6px;">
+                        Complaint Chain Slug
+                    </label>
+                    <input type="text" id="complaintChainInput"
+                           placeholder="e.g. fever, high-fever"
+                           class="input-field"
+                           oninput="onComplaintChainInput(this)" />
+                    <small id="complaintChainPreview" style="color:#94a3b8; font-size:12px;"></small>
+                </div>
                 <div class="chip-container" id="chiefComplaintChips"></div>
                 <input type="text" id="chiefComplaintInput" placeholder="+ Add another complaint..." class="input-field">
             </section>
