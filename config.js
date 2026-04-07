@@ -1,8 +1,8 @@
 // API Configuration
 const CONFIG = {
-    TRIAGE_API: 'http://34.158.32.252:9000',
-    SUMMARY_API: 'http://34.158.32.252:8004',
-    REDIS_API:   'http://34.158.32.252:8007',
+    TRIAGE_API: 'http://34.180.37.249:9000',
+    SUMMARY_API: 'http://34.180.37.249:8004',
+    REDIS_API:   'http://34.180.37.249:8000',
     DEFAULT_PATIENT_ID: '791427b4-9cc4-8bcc-3fee-e3e14b6d3fea',
 
     PATIENTS: {
