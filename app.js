@@ -13,7 +13,6 @@ function log(message, data) {
 const MONITOR = {
     logs: [],
     maxLogs: 100,
-    healthIntervalId: null
 };
 
 function addLog(type, message, details = {}) {
@@ -506,9 +505,16 @@ function renderEncounterTabs() {
             padding: 12px 32px; background: #f8fafc;
             border-bottom: 1px solid #e5e7eb;
         `;
-        const form = document.getElementById('consultationForm');
+    }
+
+    const form = document.getElementById('consultationForm');
+    const dropdownContainer = document.getElementById('complaintDropdownContainer');
+    if (dropdownContainer && dropdownContainer.nextSibling) {
+        form.insertBefore(bar, dropdownContainer.nextSibling);
+    } else {
         form.insertBefore(bar, form.firstChild);
     }
+
     bar.innerHTML = '';
 
     STATE.encounterHistory.forEach((enc) => {
@@ -725,7 +731,7 @@ function startNewEncounter() {
 
     if (STATE.currentComplaint) {
         document.getElementById('chiefComplaintInput').value = STATE.currentComplaint;
-        addChiefComplaint();
+        addChiefComplaint(true);
     }
 
     const btn = document.getElementById('generateQuestionsBtn');
@@ -785,6 +791,185 @@ function clearFormFields() {
     });
 }
 
+function sectionHasContent(containerId) {
+    return document.querySelectorAll(
+        `#${containerId} .checkbox-item`
+    ).length > 0;
+}
+
+function resetNextButton(btnId, label) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.disabled = false;
+    btn.textContent = label;
+    btn.style.cssText = '';
+    btn.style.display = 'none';
+}
+
+function setContainerEmptyState(containerId, message) {
+    const container = document.getElementById(containerId);
+    if (container) {
+        container.innerHTML = '';
+        container.innerHTML = `<p class="empty-state">${message}</p>`;
+    }
+}
+
+function clearDownstreamFromChiefComplaint() {
+    const qc = document.getElementById('questionsContainer');
+    if (qc) {
+        qc.innerHTML = '<p class="empty-state">Add chief complaint and click Generate Questions</p>';
+    }
+    setContainerEmptyState('diagnosisContainer', 'Answer questions to generate diagnoses');
+    setContainerEmptyState('investigationsContainer', 'Select diagnoses first');
+    setContainerEmptyState('medicationsContainer', 'Select investigations first');
+    setContainerEmptyState('proceduresContainer', 'Select medications first');
+
+    ['diagnosisNotes', 'investigationsNotes', 'medicationsNotes', 'proceduresNotes', 'adviceNotes'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = '';
+            el.dispatchEvent(new Event('input'));
+        }
+    });
+
+    resetNextButton('btnNextInv', 'Next: Investigations →');
+    resetNextButton('btnNextMed', 'Next: Medications →');
+    resetNextButton('btnNextProc', 'Next: Procedures →');
+
+    const generateBtn = document.getElementById('generateQuestionsBtn');
+    if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = 'Generate Questions';
+        generateBtn.style.backgroundColor = '';
+        generateBtn.style.color = '';
+        generateBtn.style.border = '';
+        generateBtn.style.opacity = '';
+    }
+
+    STATE.sessionId = null;
+    STATE.questions = [];
+    STATE.answers = [];
+    STATE.selectedDiagnoses = [];
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+    STATE.manualDiagnoses = [];
+    STATE.manualInvestigations = [];
+    STATE.manualMedications = [];
+    STATE.manualProcedures = [];
+
+    ['manualQAList', 'manualDiagList', 'manualInvList', 'manualMedList', 'manualProcList'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+}
+
+function clearDownstreamFromDiagnosis() {
+    ['investigationsContainer','medicationsContainer','proceduresContainer'].forEach(id => {
+        const w = document.getElementById(id)?.querySelector('.regenerate-warning');
+        if (w) w.remove();
+    });
+
+    setContainerEmptyState('investigationsContainer', 'Select diagnoses first');
+    setContainerEmptyState('medicationsContainer', 'Select investigations first');
+    setContainerEmptyState('proceduresContainer', 'Select medications first');
+
+    ['investigationsNotes', 'medicationsNotes', 'proceduresNotes'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = '';
+            el.dispatchEvent(new Event('input'));
+        }
+    });
+
+    resetNextButton('btnNextMed', 'Next: Medications →');
+    resetNextButton('btnNextProc', 'Next: Procedures →');
+    resetNextButton('btnNextInv', 'Next: Investigations →');
+    const btnNextInv = document.getElementById('btnNextInv');
+    if (btnNextInv) btnNextInv.style.display = 'inline-block';
+
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+
+    ['manualInvList', 'manualMedList', 'manualProcList'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+}
+
+function clearDownstreamFromInvestigation() {
+    ['medicationsContainer','proceduresContainer'].forEach(id => {
+        const w = document.getElementById(id)?.querySelector('.regenerate-warning');
+        if (w) w.remove();
+    });
+
+    setContainerEmptyState('medicationsContainer', 'Select investigations first');
+    setContainerEmptyState('proceduresContainer', 'Select medications first');
+
+    ['medicationsNotes', 'proceduresNotes'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = '';
+            el.dispatchEvent(new Event('input'));
+        }
+    });
+
+    resetNextButton('btnNextProc', 'Next: Procedures →');
+    resetNextButton('btnNextMed', 'Next: Medications →');
+    const btnNextMed = document.getElementById('btnNextMed');
+    if (btnNextMed) btnNextMed.style.display = 'inline-block';
+
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+
+    ['manualMedList', 'manualProcList'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+}
+
+function clearDownstreamFromMedication() {
+    const w = document.getElementById('proceduresContainer')?.querySelector('.regenerate-warning');
+    if (w) w.remove();
+
+    setContainerEmptyState('proceduresContainer', 'Select medications first');
+
+    const proceduresNotes = document.getElementById('proceduresNotes');
+    if (proceduresNotes) {
+        proceduresNotes.value = '';
+        proceduresNotes.dispatchEvent(new Event('input'));
+    }
+
+    resetNextButton('btnNextProc', 'Next: Procedures →');
+    const btnNextProc = document.getElementById('btnNextProc');
+    if (btnNextProc) btnNextProc.style.display = 'inline-block';
+
+    STATE.selectedProcedures = [];
+
+    const manualProcList = document.getElementById('manualProcList');
+    if (manualProcList) manualProcList.innerHTML = '';
+}
+
+function handleManualEntryDownstream(containerId) {
+    if (containerId === 'manualDiagList' && sectionHasContent('investigationsContainer')) {
+        clearDownstreamFromDiagnosis();
+    }
+    if (containerId === 'manualInvList' && sectionHasContent('medicationsContainer')) {
+        clearDownstreamFromInvestigation();
+    }
+    if (containerId === 'manualMedList' && sectionHasContent('proceduresContainer')) {
+        clearDownstreamFromMedication();
+    }
+}
+
+function removeManualEntry(btn, containerId) {
+    if (btn && btn.parentElement) {
+        btn.parentElement.remove();
+    }
+    handleManualEntryDownstream(containerId);
+}
+
 function showComplaintChainInput() {
     document.getElementById('complaintChainSection').style.display = 'block';
     document.getElementById('complaintChainInput').value = '';
@@ -804,7 +989,7 @@ function onComplaintChainInput(inputEl) {
 // CHIEF COMPLAINT
 // ============================================================================
 
-function addChiefComplaint() {
+function addChiefComplaint(silent = false) {
     const input = document.getElementById('chiefComplaintInput');
     const val   = input.value.trim();
     if (!val) return;
@@ -813,9 +998,15 @@ function addChiefComplaint() {
     chip.innerHTML = `${val}<span class="chip-remove" onclick="removeChip(this)">×</span>`;
     document.getElementById('chiefComplaintChips').appendChild(chip);
     input.value = '';
+    if (!silent) {
+    clearDownstreamFromChiefComplaint();
+}
 }
 
-function removeChip(el) { el.parentElement.remove(); }
+function removeChip(el) {
+    el.parentElement.remove();
+    clearDownstreamFromChiefComplaint();
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('chiefComplaintInput');
@@ -827,10 +1018,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     checkAllServices();
-    if (MONITOR.healthIntervalId) {
-        clearInterval(MONITOR.healthIntervalId);
-    }
-    MONITOR.healthIntervalId = setInterval(checkAllServices, 10000);
 
     ensureComplaintDropdown();
 
@@ -997,9 +1184,37 @@ function renderDiagnosisFromQuestions(data) {
 // DIAGNOSIS
 // ============================================================================
 
+function showRegenerateWarning(containerId, message) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    // remove any existing warning first
+    const existing = container.querySelector('.regenerate-warning');
+    if (existing) existing.remove();
+
+    const warning = document.createElement('div');
+    warning.className = 'regenerate-warning';
+    warning.style.cssText = `
+        background: #fefce8; border: 1.5px solid #facc15;
+        border-radius: 8px; padding: 12px 16px; margin-bottom: 10px;
+        display: flex; align-items: center; gap: 10px;
+    `;
+    warning.innerHTML = `
+        <span style="font-size:18px;">⚠️</span>
+        <span class="warning-text" style="font-size:13px; color:#854d0e; font-weight:500; flex:1;">${message}</span>
+    `;
+    container.insertBefore(warning, container.firstChild);
+}
+
 function toggleDiagnosis(d) {
     const i = STATE.selectedDiagnoses.indexOf(d);
-    if (i > -1) STATE.selectedDiagnoses.splice(i, 1); else STATE.selectedDiagnoses.push(d);
+    if (i > -1) STATE.selectedDiagnoses.splice(i, 1);
+    else STATE.selectedDiagnoses.push(d);
+
+    if (sectionHasContent('investigationsContainer')) {
+        clearDownstreamFromDiagnosis();
+        showRegenerateWarning('investigationsContainer', 
+            'Diagnosis changed — click "Next: Investigations →" to regenerate');
+    }
 }
 
 function saveDiagnoses()         { hideUnselected('diagnosisContainer'); }
@@ -1009,6 +1224,7 @@ function proceedToInvestigations() {
     const all = [...STATE.selectedDiagnoses, ...getManualEntries('manualDiagList')];
     if (!all.length) { alert('Select or add at least one diagnosis.'); return; }
     STATE.selectedDiagnoses = [...new Set(all)];
+    clearDownstreamFromDiagnosis();
     generateInvestigations();
 }
 
@@ -1051,7 +1267,14 @@ async function generateInvestigations() {
 
 function toggleInvestigation(i) {
     const idx = STATE.selectedInvestigations.indexOf(i);
-    if (idx > -1) STATE.selectedInvestigations.splice(idx, 1); else STATE.selectedInvestigations.push(i);
+    if (idx > -1) STATE.selectedInvestigations.splice(idx, 1);
+    else STATE.selectedInvestigations.push(i);
+
+    if (sectionHasContent('medicationsContainer')) {
+        clearDownstreamFromInvestigation();
+        showRegenerateWarning('medicationsContainer', 
+            'Investigation changed — click "Next: Medications →" to regenerate');
+    }
 }
 
 function saveInvestigations() { hideUnselected('investigationsContainer'); }
@@ -1060,6 +1283,7 @@ function proceedToMedications() {
     const all = [...STATE.selectedInvestigations, ...getManualEntries('manualInvList')];
     if (!all.length) { alert('Select or add at least one investigation.'); return; }
     STATE.selectedInvestigations = [...new Set(all)];
+    clearDownstreamFromInvestigation();
     generateMedications();
 }
 
@@ -1106,7 +1330,14 @@ async function generateMedications() {
 
 function toggleMedication(m) {
     const i = STATE.selectedMedications.indexOf(m);
-    if (i > -1) STATE.selectedMedications.splice(i, 1); else STATE.selectedMedications.push(m);
+    if (i > -1) STATE.selectedMedications.splice(i, 1);
+    else STATE.selectedMedications.push(m);
+
+    if (sectionHasContent('proceduresContainer')) {
+        clearDownstreamFromMedication();
+        showRegenerateWarning('proceduresContainer', 
+            'Medication changed — click "Next: Procedures →" to regenerate');
+    }
 }
 
 function saveMedications() { hideUnselected('medicationsContainer'); }
@@ -1115,6 +1346,7 @@ function proceedToProcedures() {
     const all = [...STATE.selectedMedications, ...getManualEntries('manualMedList')];
     if (!all.length) { alert('Select or add at least one medication.'); return; }
     STATE.selectedMedications = [...new Set(all)];
+    clearDownstreamFromMedication();
     generateProcedures();
 }
 
@@ -1180,9 +1412,15 @@ function addManualEntry(containerId, placeholder) {
     item.className = 'manual-entry-item';
     item.innerHTML = `
         <input type="text" placeholder="${placeholder}"/>
-        <button class="btn-remove" onclick="this.parentElement.remove()">×</button>
+        <button class="btn-remove" onclick="removeManualEntry(this, '${containerId}')">×</button>
     `;
     document.getElementById(containerId).appendChild(item);
+    const inputEl = item.querySelector('input[type="text"]');
+    inputEl.addEventListener('input', () => {
+        if (inputEl.value.trim()) {
+            handleManualEntryDownstream(containerId);
+        }
+    });
 }
 
 function getManualEntries(containerId) {
@@ -1394,6 +1632,9 @@ function cancel() {
         document.getElementById('complaintChainSection').style.display = 'none';
         const bar = document.getElementById('encounterTabBar');
         if (bar) bar.remove();
+        const dropdownContainer = document.getElementById('complaintDropdownContainer');
+        if (dropdownContainer) dropdownContainer.remove();
+        window._complaintDropdownBound = false;
         resetEncounterState();
         localStorage.removeItem('selectedPatientId');
         STATE.currentPatient   = null;
