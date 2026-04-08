@@ -3,18 +3,7 @@ const CONFIG = {
     TRIAGE_API: 'http://34.180.37.249:9000',
     SUMMARY_API: 'http://34.180.37.249:8004',
     REDIS_API:   'http://34.180.37.249:8000',
-    DEFAULT_PATIENT_ID: '791427b4-9cc4-8bcc-3fee-e3e14b6d3fea',
-    
-    PATIENTS: {
-        'yolanda': {
-            id: '791427b4-9cc4-8bcc-3fee-e3e14b6d3fea',
-            name: 'Yolanda Delrío'
-        },
-        'dorene': {
-            id: 'dorene-patient-id',
-            name: 'Dorene Smith'
-        }
-    }
+    DEFAULT_PATIENT_ID: '791427b4-9cc4-8bcc-3fee-e3e14b6d3fea'
 };
 
 // Global state

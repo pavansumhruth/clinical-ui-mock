@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Patient Registration</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- LEFT SIDEBAR (same as index.html) -->
-    <div class="sidebar">
+    <aside class="sidebar">
         <div class="sidebar-header">
             <h2>Doctor Portal</h2>
             <p>Healthcare Management</p>
@@ -17,123 +17,223 @@
             <a href="#" class="nav-item">Appointments</a>
             <a href="register.html" class="nav-item active">Register New Patient</a>
             <a href="#" class="nav-item">OPD Billing</a>
-            <div class="nav-section">Patients</div>
-            <div class="nav-section">Vitals</div>
-            <div class="nav-section">Consultations</div>
-            <div class="nav-section">Vaccinations</div>
-            <div class="nav-section">Rx Settings</div>
-            <div class="nav-section">Profile</div>
+            <div class="nav-item active patients-section">
+                <span>Patients</span>
+                <div id="patientList" class="patient-list"></div>
+            </div>
+            <a href="#" class="nav-item">Vitals</a>
+            <a href="#" class="nav-item">Consultations</a>
+            <a href="#" class="nav-item">Vaccinations</a>
+            <a href="#" class="nav-item">Rx Settings</a>
+            <a href="#" class="nav-item">Profile</a>
         </div>
-    </div>
+    </aside>
 
-    <!-- MAIN CONTENT -->
     <div class="main-content">
-        <div style="max-width: 700px; margin: 40px auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h1 style="margin-bottom: 30px;">Patient Registration</h1>
-            
-            <form id="regForm" onsubmit="registerPatient(event)">
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Full Name *</label>
-                    <input type="text" id="name" required class="input-field">
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Date of Birth *</label>
-                    <input type="date" id="dob" required class="input-field">
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Gender *</label>
-                    <select id="gender" required class="input-field">
-                        <option value="">Select</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                    </select>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Blood Type</label>
-                    <select id="blood_type" class="input-field">
-                        <option value="">Select</option>
-                        <option value="A+">A+</option>
-                        <option value="A-">A-</option>
-                        <option value="B+">B+</option>
-                        <option value="B-">B-</option>
-                        <option value="O+">O+</option>
-                        <option value="O-">O-</option>
-                        <option value="AB+">AB+</option>
-                        <option value="AB-">AB-</option>
-                    </select>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Contact *</label>
-                    <input type="tel" id="contact" required class="input-field" placeholder="+91 1234567890">
-                </div>
-                <div style="margin-bottom: 30px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Address</label>
-                    <textarea id="address" class="input-field" rows="3"></textarea>
-                </div>
-                <button type="submit" class="btn-primary" style="width: 100%;">Register Patient</button>
-            </form>
-            
-            <div id="message" style="margin-top: 20px; display: none; padding: 15px; border-radius: 8px;"></div>
+        <div class="registration-shell">
+            <div class="registration-card">
+                <h1>Patient Registration</h1>
+
+                <form id="regForm" novalidate>
+                    <div class="form-row">
+                        <label for="patient_id">Patient ID *</label>
+                        <input type="text" id="patient_id" name="patient_id" required class="input-field" placeholder="Enter unique patient ID" autocomplete="off" spellcheck="false">
+                    </div>
+
+                    <div class="form-row">
+                        <label for="name">Name *</label>
+                        <input type="text" id="name" name="name" required class="input-field" placeholder="Enter patient name">
+                    </div>
+
+                    <div class="form-row">
+                        <label for="dob">DOB *</label>
+                        <input type="date" id="dob" name="dob" required class="input-field">
+                    </div>
+
+                    <div class="form-row">
+                        <label for="gender">Gender</label>
+                        <select id="gender" name="gender" required class="input-field">
+                            <option value="">Select gender</option>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <label for="blood_type">Blood Type *</label>
+                        <select id="blood_type" name="blood_type" required class="input-field">
+                            <option value="">Select blood type</option>
+                            <option value="A+">A+</option>
+                            <option value="A-">A-</option>
+                            <option value="B+">B+</option>
+                            <option value="B-">B-</option>
+                            <option value="O+">O+</option>
+                            <option value="O-">O-</option>
+                            <option value="AB+">AB+</option>
+                            <option value="AB-">AB-</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <label for="contact">Contact *</label>
+                        <input type="text" id="contact" name="contact" required class="input-field" inputmode="numeric" placeholder="10 digit contact number">
+                    </div>
+
+                    <div class="form-row">
+                        <label for="address">Address</label>
+                        <textarea id="address" name="address" class="input-field" rows="4" placeholder="Patient address"></textarea>
+                    </div>
+
+                    <button type="submit" id="submitButton" class="btn-primary registration-submit">Register Patient</button>
+                </form>
+
+                <div id="formMessage" class="form-message" aria-live="polite"></div>
+            </div>
         </div>
     </div>
     
+    <script src="config.js"></script>
+    <script src="patientService.js"></script>
+    <script src="patientUI.js"></script>
     <script>
-        async function registerPatient(event) {
+        const form = document.getElementById('regForm');
+        const messageBox = document.getElementById('formMessage');
+        const submitButton = document.getElementById('submitButton');
+        const patientIdInput = document.getElementById('patient_id');
+        const formInputs = Array.from(form.querySelectorAll('input, select, textarea'));
+
+        function showMessage(type, text) {
+            messageBox.className = `form-message ${type}`;
+            messageBox.textContent = text;
+        }
+
+        function clearMessage() {
+            messageBox.className = 'form-message';
+            messageBox.textContent = '';
+        }
+
+        function isFutureDate(value) {
+            if (!value) return false;
+            const chosenDate = new Date(`${value}T00:00:00`);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return chosenDate > today;
+        }
+
+        formInputs.forEach((input) => {
+            input.addEventListener('input', clearMessage);
+            input.addEventListener('change', clearMessage);
+        });
+
+        form.addEventListener('submit', async (event) => {
             event.preventDefault();
-            const btn = event.target.querySelector('button');
-            btn.disabled = true;
-            btn.textContent = 'Registering...';
-            
-            const patient_id = 'pat_' + Date.now();
+
+            const patient_id = patientIdInput.value.trim();
+            const name = document.getElementById('name').value.trim();
+            const dob = document.getElementById('dob').value;
+            const gender = document.getElementById('gender').value;
+            const bloodType = document.getElementById('blood_type').value;
+            const contact = document.getElementById('contact').value.trim();
+            const address = document.getElementById('address').value.trim();
+
+            if (!patient_id) {
+                showMessage('error', 'Patient ID is required.');
+                return;
+            }
+
+            if (/\s/.test(patient_id)) {
+                showMessage('error', 'Patient ID must not contain spaces.');
+                return;
+            }
+
+            const patients = getPatients();
+            const exists = patients.some((patient) => patient.patient_id === patient_id);
+            if (exists) {
+                showMessage('error', 'Patient ID already exists. Please use another ID.');
+                return;
+            }
+
+            if (!name) {
+                showMessage('error', 'Name is required.');
+                return;
+            }
+
+            if (!dob) {
+                showMessage('error', 'DOB is required.');
+                return;
+            }
+
+            if (isFutureDate(dob)) {
+                showMessage('error', 'DOB cannot be in the future.');
+                return;
+            }
+
+            if (!gender) {
+                showMessage('error', 'Gender is required.');
+                return;
+            }
+
+            if (!bloodType) {
+                showMessage('error', 'Blood type is required.');
+                return;
+            }
+
+            if (!/^\d{10}$/.test(contact)) {
+                showMessage('error', 'Contact must be a numeric 10 digit value.');
+                return;
+            }
+
             const payload = {
                 patient_id: patient_id,
-                name: document.getElementById('name').value,
-                dob: document.getElementById('dob').value,
-                gender: document.getElementById('gender').value,
-                blood_type: document.getElementById('blood_type').value || '',
-                contact: document.getElementById('contact').value,
-                address: document.getElementById('address').value || ''
+                name: name,
+                dob: dob,
+                gender: gender,
+                blood_type: bloodType,
+                contact: contact,
+                address: address
             };
-            
-            console.log('Sending to Vikas API:', payload);
-            
+
+            submitButton.disabled = true;
+            submitButton.textContent = 'Registering...';
+            showMessage('loading', 'Submitting patient registration...');
+
             try {
-                const response = await fetch('http://34.180.37.249:8000/api/v1/patient', {
+                const res = await fetch(`${CONFIG.REDIS_API}/api/v1/patient`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify(payload)
                 });
-                
-                const data = await response.json();
-                console.log('Response from Vikas:', data);
-                
-                const msg = document.getElementById('message');
-                
-                if (response.ok) {
-                    msg.style.display = 'block';
-                    msg.style.background = '#d1fae5';
-                    msg.style.color = '#065f46';
-                    msg.innerHTML = `✓ Patient registered successfully!<br><strong>Patient ID: ${patient_id}</strong><br><small>Copy this ID for records</small>`;
-                    event.target.reset();
-                    
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 3000);
-                } else {
-                    throw new Error(data.detail || 'Registration failed');
+
+                if (!res.ok) {
+                    let errorMessage = 'Failed to create patient';
+                    try {
+                        const err = await res.json();
+                        errorMessage = err.detail || JSON.stringify(err);
+                    } catch {}
+                    throw new Error(errorMessage);
                 }
+
+                savePatient(payload);
+                localStorage.setItem('selectedPatientId', patient_id);
+                renderPatientList(patient_id);
+                showMessage('success', 'Patient registered successfully. Redirecting to the dashboard...');
+                form.reset();
+
+                window.location.href = 'index.html';
             } catch (error) {
-                console.error('Registration error:', error);
-                const msg = document.getElementById('message');
-                msg.style.display = 'block';
-                msg.style.background = '#fee2e2';
-                msg.style.color = '#991b1b';
-                msg.textContent = '✗ Error: ' + error.message;
-                btn.disabled = false;
-                btn.textContent = 'Register Patient';
+                const errorMessage = error?.message || 'Registration failed';
+                showMessage('error', errorMessage === 'Failed to fetch' ? 'Network error: Failed to fetch' : errorMessage);
+                submitButton.disabled = false;
+                submitButton.textContent = 'Register Patient';
             }
-        }
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            renderPatientList();
+        });
     </script>
 </body>
 </html>

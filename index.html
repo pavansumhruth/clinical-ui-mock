@@ -6,7 +6,7 @@
     <title>Doctor Portal - Clinical Assistant</title>
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="dashboard-page">
     <!-- Left Sidebar -->
     <aside class="sidebar">
         <div class="sidebar-header">
@@ -17,22 +17,12 @@
         <nav class="sidebar-nav">
             <a href="#" class="nav-item">Dashboard</a>
             <a href="#" class="nav-item">Appointments</a>
-            <a href="#" class="nav-item">Registration</a>
+            <a href="register.html" class="nav-item">Register Patient</a>
             <a href="#" class="nav-item">OPD Billing</a>
             
             <div class="nav-item active patients-section">
                 <span>Patients</span>
-                <div class="patient-list">
-                    <div class="patient-item" data-patient="yolanda" onmouseenter="loadPatientComplaints('yolanda')">
-                        <span class="patient-name">Yolanda Delrío</span>
-                        <div class="complaint-popup" id="complaints-yolanda"></div>
-                    </div>
-                    
-                    <div class="patient-item" data-patient="dorene" onmouseenter="loadPatientComplaints('dorene')">
-                        <span class="patient-name">Dorene Smith</span>
-                        <div class="complaint-popup" id="complaints-dorene"></div>
-                    </div>
-                </div>
+                <div id="patientList" class="patient-list"></div>
             </div>
             
             <a href="#" class="nav-item">Vitals</a>
@@ -249,9 +239,21 @@
             <h2>👈 Select a patient to begin consultation</h2>
             <p>Choose a patient from the sidebar or click "New Complaint" to start</p>
         </div>
+
+        <aside class="monitor-panel" aria-label="System Monitor Panel">
+            <div class="monitor-header-row">
+                <h3>System Monitor</h3>
+                <button type="button" id="clearLogsBtn" class="monitor-clear-btn">Clear Logs</button>
+            </div>
+            <div id="serviceStatus" class="service-status"></div>
+            <div id="apiLogs" class="api-logs" aria-live="polite"></div>
+        </aside>
     </main>
 
     <script src="config.js"></script>
+    <script src="patientService.js"></script>
+    <script src="api.js"></script>
+    <script src="patientUI.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

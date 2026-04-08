@@ -10,6 +10,165 @@ function log(message, data) {
     console.log(`[Clinical UI] ${message}`, data || '');
 }
 
+const MONITOR = {
+    logs: [],
+    maxLogs: 100,
+    healthIntervalId: null
+};
+
+function addLog(type, message, details = {}) {
+    const entry = {
+        type,
+        message,
+        details,
+        timestamp: new Date().toISOString()
+    };
+
+    MONITOR.logs.unshift(entry);
+    if (MONITOR.logs.length > MONITOR.maxLogs) {
+        MONITOR.logs = MONITOR.logs.slice(0, MONITOR.maxLogs);
+    }
+
+    renderLogs();
+}
+
+function renderLogs() {
+    const container = document.getElementById('apiLogs');
+    if (!container) return;
+
+    container.textContent = '';
+
+    MONITOR.logs.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = `log-item ${entry.type}`;
+
+        const header = document.createElement('div');
+        header.className = 'log-item-header';
+
+        const message = document.createElement('span');
+        message.className = 'log-item-message';
+        message.textContent = entry.message;
+
+        const time = document.createElement('span');
+        time.className = 'log-item-time';
+        time.textContent = new Date(entry.timestamp).toLocaleTimeString();
+
+        header.appendChild(message);
+        header.appendChild(time);
+
+        const details = document.createElement('pre');
+        details.className = 'log-item-details';
+        details.textContent = JSON.stringify(entry.details, null, 2);
+
+        item.appendChild(header);
+        item.appendChild(details);
+        container.appendChild(item);
+    });
+}
+
+function clearLogs() {
+    MONITOR.logs = [];
+    renderLogs();
+}
+
+function interpretError(error) {
+    const msg = error?.message || 'Unknown error';
+
+    if (msg.includes('Failed to fetch')) {
+        return {
+            reason: 'Network/CORS issue',
+            explanation: 'Backend unreachable or blocked by CORS'
+        };
+    }
+
+    if (msg.includes('422')) {
+        return {
+            reason: 'Validation error',
+            explanation: 'Invalid data sent to backend'
+        };
+    }
+
+    if (msg.includes('500')) {
+        return {
+            reason: 'Server error',
+            explanation: 'Backend crashed or failed internally'
+        };
+    }
+
+    return {
+        reason: 'Unknown error',
+        explanation: msg
+    };
+}
+
+async function apiRequest(url, options, serviceName, settings = {}) {
+    const parseJson = settings.parseJson !== false;
+
+    addLog('info', `${serviceName}: Request`, { url, method: options?.method || 'GET' });
+
+    try {
+        const res = await fetch(url, options);
+
+        if (!res.ok) {
+            let err = {};
+            try {
+                err = await res.json();
+            } catch {}
+            const detail = err?.detail ? `: ${err.detail}` : '';
+            throw new Error(`${res.status}${detail}`);
+        }
+
+        if (!parseJson) {
+            addLog('success', `${serviceName}: Success`, { url, status: res.status });
+            return res;
+        }
+
+        const data = await res.json();
+        addLog('success', `${serviceName}: Success`, data);
+        return data;
+    } catch (error) {
+        const info = interpretError(error);
+
+        addLog('error', `${serviceName}: Failed`, {
+            url,
+            error: error.message,
+            reason: info.reason,
+            explanation: info.explanation
+        });
+
+        throw error;
+    }
+}
+
+async function checkAllServices() {
+    const services = [
+        { name: 'Redis API', url: `${CONFIG.REDIS_API}/health` },
+        { name: 'Triage API', url: `${CONFIG.TRIAGE_API}/health` },
+        { name: 'Summary API', url: `${CONFIG.SUMMARY_API}/health` }
+    ];
+
+    const container = document.getElementById('serviceStatus');
+    if (!container) return;
+    container.textContent = '';
+
+    for (const svc of services) {
+        const el = document.createElement('div');
+        el.className = 'service-status-item';
+
+        try {
+            const res = await fetch(svc.url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            el.textContent = `${svc.name} -> UP`;
+            el.classList.add('up');
+        } catch {
+            el.textContent = `${svc.name} -> DOWN`;
+            el.classList.add('down');
+        }
+
+        container.appendChild(el);
+    }
+}
+
 
 
 
@@ -23,12 +182,76 @@ function resolveComplaintChain(chiefComplaintText) {
 
     return (chiefComplaintText || "").trim();
 }
+
+function getCurrentPatientId() {
+    return STATE.currentPatient?.patient_id || STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID;
+}
+
+function resetEncounterState() {
+    STATE.sessionId = null;
+    STATE.viewMode = false;
+    STATE.currentEncounterId = null;
+    STATE.encounterHistory = [];
+    STATE.questions = [];
+    STATE.answers = [];
+    STATE.selectedDiagnoses = [];
+    STATE.selectedInvestigations = [];
+    STATE.selectedMedications = [];
+    STATE.selectedProcedures = [];
+    STATE.manualQuestions = [];
+    STATE.manualDiagnoses = [];
+    STATE.manualInvestigations = [];
+    STATE.manualMedications = [];
+    STATE.manualProcedures = [];
+}
+
+function activatePatient(patient, options = {}) {
+    if (!patient) return;
+
+    resetEncounterState();
+    STATE.currentPatient = patient;
+    STATE.currentComplaint = options.complaint ?? null;
+    STATE.currentComplaintSlug = options.complaintSlug ?? null;
+
+    localStorage.setItem('selectedPatientId', patient.patient_id);
+
+    const patientNameEl = document.getElementById('currentPatientName');
+    if (patientNameEl) patientNameEl.textContent = patient.name;
+
+    const complaintEl = document.getElementById('currentComplaint');
+    if (complaintEl) complaintEl.textContent = options.complaintLabel || (options.complaint || 'New Complaint');
+
+    const emptyState = document.getElementById('emptyState');
+    if (emptyState) emptyState.style.display = 'none';
+
+    const form = document.getElementById('consultationForm');
+    if (form) form.style.display = 'block';
+
+    const chainSection = document.getElementById('complaintChainSection');
+    if (chainSection) chainSection.style.display = 'none';
+
+    const bar = document.getElementById('encounterTabBar');
+    if (bar) bar.remove();
+
+    if (typeof renderPatientList === 'function') {
+        renderPatientList(patient.patient_id);
+    }
+}
+
+function selectPatient(patient) {
+    activatePatient(patient);
+    addLog('info', 'Patient selected', {
+        patient_id: patient.patient_id,
+        name: patient.name
+    });
+    startNewEncounter();
+}
 // ============================================================================
 // SIDEBAR — Patient complaint click → fetch history from Redis
 // ============================================================================
 
 async function loadPatientComplaints(patientKey) {
-    const patient = CONFIG.PATIENTS[patientKey];
+    const patient = getPatientById(patientKey);
     if (!patient) return;
 
     const popup = document.getElementById(`complaints-${patientKey}`);
@@ -37,8 +260,11 @@ async function loadPatientComplaints(patientKey) {
     popup.innerHTML = '<div class="complaint-item">Loading complaints...</div>';
 
     try {
-        const res = await fetch(`${CONFIG.REDIS_API}/api/v1/patient/${patient.id}/complaints`);
-        const complaints = res.ok ? await res.json() : [];
+        const complaints = await apiRequest(
+            `${CONFIG.REDIS_API}/api/v1/patient/${patient.patient_id}/complaints`,
+            { method: 'GET' },
+            'Redis API'
+        );
 
         popup.innerHTML = '';
 
@@ -69,30 +295,18 @@ async function loadPatientComplaints(patientKey) {
 }
 
 async function openComplaintChain(patientKey, displayName, chainSlug) {
-    const patient = CONFIG.PATIENTS[patientKey];
+    const patient = getPatientById(patientKey);
     if (!patient) return;
 
-    STATE.currentPatient     = patient;
-    STATE.currentComplaint   = displayName;
-    STATE.currentComplaintSlug = chainSlug;
-    STATE.encounterHistory   = [];
-    STATE.viewMode           = false;
-    STATE.currentEncounterId = null;
-
-    document.getElementById('currentPatientName').textContent = patient.name;
-    document.getElementById('currentComplaint').textContent   = displayName;
-    document.getElementById('emptyState').style.display       = 'none';
-    document.getElementById('consultationForm').style.display = 'block';
-    document.getElementById('complaintChainSection').style.display = 'none';
+    activatePatient(patient, { complaint: displayName, complaintSlug: chainSlug, complaintLabel: displayName });
 
     try {
-        const res = await fetch(
-            `${CONFIG.REDIS_API}/api/v1/patient/${patient.id}/complaint?complaint=${encodeURIComponent(chainSlug)}&limit=20`
+        STATE.encounterHistory = await apiRequest(
+            `${CONFIG.REDIS_API}/api/v1/patient/${patient.patient_id}/complaint?complaint=${encodeURIComponent(chainSlug)}&limit=20`,
+            { method: 'GET' },
+            'Redis API'
         );
-        if (res.ok) {
-            STATE.encounterHistory = await res.json();
-            STATE.encounterHistory.sort((a, b) => a.visit_number - b.visit_number);
-        }
+        STATE.encounterHistory.sort((a, b) => a.visit_number - b.visit_number);
     } catch (e) {
         log('Could not load encounter history', e);
     }
@@ -102,20 +316,10 @@ async function openComplaintChain(patientKey, displayName, chainSlug) {
 }
 
 function startNewComplaint(patientKey) {
-    const patient = CONFIG.PATIENTS[patientKey];
+    const patient = getPatientById(patientKey);
     if (!patient) return;
 
-    STATE.currentPatient     = patient;
-    STATE.currentComplaint   = null;
-    STATE.currentComplaintSlug = null;
-    STATE.encounterHistory   = [];
-    STATE.viewMode           = false;
-    STATE.currentEncounterId = null;
-
-    document.getElementById('currentPatientName').textContent = patient.name;
-    document.getElementById('currentComplaint').textContent   = 'New Complaint';
-    document.getElementById('emptyState').style.display       = 'none';
-    document.getElementById('consultationForm').style.display = 'block';
+    activatePatient(patient, { complaintLabel: 'New Complaint' });
 
     renderEncounterTabs();
     startNewEncounter();
@@ -339,6 +543,12 @@ function startNewEncounter() {
     document.getElementById('currentComplaint').textContent =
         `${STATE.currentComplaint || 'New Complaint'} — New Visit (${visitNum})`;
 
+    addLog('info', 'Encounter started', {
+        patient_id: getCurrentPatientId(),
+        visit_number: visitNum,
+        complaint: STATE.currentComplaint || 'New Complaint'
+    });
+
     clearFormFields();
     // Reset prescription button
     const rxBtn = document.querySelector('.btn-success');
@@ -446,6 +656,29 @@ function removeChip(el) { el.parentElement.remove(); }
 document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('chiefComplaintInput');
     if (input) input.addEventListener('keypress', e => { if (e.key === 'Enter') addChiefComplaint(); });
+
+    const clearBtn = document.getElementById('clearLogsBtn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearLogs);
+    }
+
+    checkAllServices();
+    if (MONITOR.healthIntervalId) {
+        clearInterval(MONITOR.healthIntervalId);
+    }
+    MONITOR.healthIntervalId = setInterval(checkAllServices, 10000);
+
+    if (typeof renderPatientList === 'function') {
+        renderPatientList();
+    }
+
+    const selectedPatientId = localStorage.getItem('selectedPatientId');
+    if (selectedPatientId && typeof getPatientById === 'function') {
+        const patient = getPatientById(selectedPatientId);
+        if (patient) {
+            selectPatient(patient);
+        }
+    }
 });
 
 // ============================================================================
@@ -491,23 +724,30 @@ async function generateQuestions() {
     try {
         const complaintChain = resolveComplaintChain(chiefComplaint);
 
-        const res = await fetch(`${CONFIG.TRIAGE_API}/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            chief_complaint:  chiefComplaint,
-            complaint_chain:  complaintChain,
-            clinical_history: clinicalHistory,
-            patient_id:       STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID,
-        })
-    });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
+        const data = await apiRequest(
+            `${CONFIG.TRIAGE_API}/start`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chief_complaint:  chiefComplaint,
+                    complaint_chain:  complaintChain,
+                    clinical_history: clinicalHistory,
+                    patient_id:       getCurrentPatientId(),
+                })
+            },
+            'Triage API'
+        );
 
         STATE.sessionId = data.session_id;
         STATE.questions = [];
         document.getElementById('questionsContainer').innerHTML = '';
         renderQuestion(data);
+
+        addLog('info', 'Questions generated', {
+            patient_id: getCurrentPatientId(),
+            session_id: STATE.sessionId
+        });
 
         btn.textContent = 'Questions Generated ✓';
         btn.style.backgroundColor = '#10b981'; btn.style.color = '#fff';
@@ -542,12 +782,14 @@ async function answerQuestion(btn, selectedOption, qIndex) {
     STATE.answers.push(selectedOption);
 
     try {
-        const res = await fetch(`${CONFIG.TRIAGE_API}/answer`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: STATE.sessionId, selected_option: selectedOption })
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
+        const data = await apiRequest(
+            `${CONFIG.TRIAGE_API}/answer`,
+            {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: STATE.sessionId, selected_option: selectedOption })
+            },
+            'Triage API'
+        );
         if (data.completed) renderDiagnosisFromQuestions(data);
         else renderQuestion(data);
     } catch (e) {
@@ -612,12 +854,14 @@ async function generateInvestigations() {
     const container = document.getElementById('investigationsContainer');
     container.innerHTML = '<p class="empty-state">Generating investigations...</p>';
     try {
-        const res = await fetch(`${CONFIG.TRIAGE_API}/select-diagnoses`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedDiagnoses] })
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
+        const data = await apiRequest(
+            `${CONFIG.TRIAGE_API}/select-diagnoses`,
+            {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedDiagnoses] })
+            },
+            'Triage API'
+        );
 
         container.innerHTML = '';
         (data.investigations || []).forEach(inv => {
@@ -661,12 +905,14 @@ async function generateMedications() {
     const container = document.getElementById('medicationsContainer');
     container.innerHTML = '<p class="empty-state">Generating medications...</p>';
     try {
-        const res = await fetch(`${CONFIG.TRIAGE_API}/select-investigations`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedInvestigations] })
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
+        const data = await apiRequest(
+            `${CONFIG.TRIAGE_API}/select-investigations`,
+            {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedInvestigations] })
+            },
+            'Triage API'
+        );
 
         container.innerHTML = '';
         (data.medications || []).forEach(med => {
@@ -714,12 +960,14 @@ async function generateProcedures() {
     const container = document.getElementById('proceduresContainer');
     container.innerHTML = '<p class="empty-state">Generating procedures...</p>';
     try {
-        const res = await fetch(`${CONFIG.TRIAGE_API}/select-medications`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedMedications] })
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
+        const data = await apiRequest(
+            `${CONFIG.TRIAGE_API}/select-medications`,
+            {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedMedications] })
+            },
+            'Triage API'
+        );
 
         container.innerHTML = '';
         (data.procedures || []).forEach(proc => {
@@ -808,7 +1056,7 @@ async function generateNotes(section) {
 
     const chips = document.querySelectorAll('#chiefComplaintChips .chip');
     const payload = {
-        patient_id: STATE.currentPatient?.id || CONFIG.DEFAULT_PATIENT_ID,
+        patient_id: getCurrentPatientId(),
         context: {
             chief_complaint: Array.from(chips).map(c => c.textContent.replace('×', '').trim()).join(', '),
             diagnoses:       [...STATE.selectedDiagnoses,      ...getManualEntries('manualDiagList')],
@@ -821,10 +1069,14 @@ async function generateNotes(section) {
     };
 
     try {
-        const res = await fetch(`${CONFIG.SUMMARY_API}/api/v1/generate-summary-stream`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const res = await apiRequest(
+            `${CONFIG.SUMMARY_API}/api/v1/generate-summary-stream`,
+            {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            },
+            'Summary API',
+            { parseJson: false }
+        );
 
         const reader = res.body.getReader();
         const dec    = new TextDecoder();
@@ -883,7 +1135,7 @@ async function issuePrescription() {
     if (!chiefComplaints.length) { alert('Please add at least one chief complaint'); return; }
 
     const payload = {
-        patient_id:              STATE.currentPatient.id,
+        patient_id:              getCurrentPatientId(),
         complaint_chain:         STATE.currentComplaintSlug,
         visit_date:              new Date().toISOString().split('T')[0],
         chief_complaints:        chiefComplaints,
@@ -911,14 +1163,13 @@ async function issuePrescription() {
 
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-        const res = await fetch(`${CONFIG.REDIS_API}/api/v1/consultation`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${res.status}`);
-        }
-        const saved = await res.json();
+        const saved = await apiRequest(
+            `${CONFIG.REDIS_API}/api/v1/consultation`,
+            {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            },
+            'Redis API'
+        );
         const exists = STATE.encounterHistory.find(e => e.consultation_id === saved.consultation_id);
         if (!exists) {
             STATE.encounterHistory.push(saved);
@@ -955,10 +1206,14 @@ function cancel() {
         document.getElementById('complaintChainSection').style.display = 'none';
         const bar = document.getElementById('encounterTabBar');
         if (bar) bar.remove();
+        resetEncounterState();
+        localStorage.removeItem('selectedPatientId');
         STATE.currentPatient   = null;
         STATE.currentComplaint = null;
         STATE.currentComplaintSlug = null;
-        STATE.encounterHistory = [];
+        if (typeof renderPatientList === 'function') {
+            renderPatientList();
+        }
     }
 }
 
@@ -979,4 +1234,4 @@ function clearForm()              { clearFormFields(); }
 // INIT
 // ============================================================================
 
-log('Clinical UI v2.0 Initialized');
+log('Clinical UI v2.0 Initialized');      
