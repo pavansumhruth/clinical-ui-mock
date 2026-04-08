@@ -240,11 +240,109 @@ function activatePatient(patient, options = {}) {
 
 function selectPatient(patient) {
     activatePatient(patient);
+    ensureComplaintDropdown();
+    STATE.encounterHistory = [];
+    STATE.currentComplaintSlug = null;
+
+    const dropdown = document.getElementById('complaintDropdown');
+    if (dropdown) {
+        dropdown.innerHTML = '<option value="">New Complaint</option><option value="" disabled>Loading complaint chains...</option>';
+        dropdown.value = '';
+    }
+
     addLog('info', 'Patient selected', {
         patient_id: patient.patient_id,
         name: patient.name
     });
     startNewEncounter();
+    loadPatientComplaints(patient.patient_id);
+}
+
+function ensureComplaintDropdown() {
+    let container = document.getElementById('complaintDropdownContainer');
+
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'complaintDropdownContainer';
+        container.style.margin = '12px 32px';
+
+        const label = document.createElement('label');
+        label.setAttribute('for', 'complaintDropdown');
+        label.textContent = 'Complaint Chain';
+        label.style.display = 'block';
+        label.style.fontWeight = '600';
+        label.style.marginBottom = '6px';
+
+        const select = document.createElement('select');
+        select.id = 'complaintDropdown';
+        select.style.width = '100%';
+        select.style.padding = '8px';
+        select.style.border = '1px solid #cbd5e1';
+        select.style.borderRadius = '6px';
+        select.style.background = '#ffffff';
+
+        container.appendChild(label);
+        container.appendChild(select);
+
+        const form = document.getElementById('consultationForm');
+        if (!form) return;
+        form.insertBefore(container, form.firstChild);
+    }
+
+    bindComplaintDropdownOnce();
+}
+
+function bindComplaintDropdownOnce() {
+    if (window._complaintDropdownBound) return;
+
+    document.addEventListener('change', async (e) => {
+        if (e.target.id !== 'complaintDropdown') return;
+
+        const slug = e.target.value;
+        const patient = STATE.currentPatient;
+        if (!patient) return;
+
+        if (!slug) {
+            STATE.currentComplaintSlug = null;
+            STATE.encounterHistory = [];
+            renderEncounterTabs();
+            startNewEncounter();
+            return;
+        }
+
+        STATE.currentComplaintSlug = slug;
+        STATE.encounterHistory = [];
+        renderEncounterTabs();
+
+        const activePatientId = patient.patient_id;
+        const activeChainSlug = slug;
+
+        try {
+            const data = await apiRequest(
+                `${CONFIG.REDIS_API}/api/v1/patient/${activePatientId}/complaint?complaint=${encodeURIComponent(activeChainSlug)}&limit=20`,
+                { method: 'GET' },
+                'Redis API'
+            );
+
+            if (STATE.currentPatient?.patient_id !== activePatientId || STATE.currentComplaintSlug !== activeChainSlug) {
+                return;
+            }
+
+            STATE.encounterHistory = Array.isArray(data) ? data : [];
+            STATE.encounterHistory.sort((a, b) => a.visit_number - b.visit_number);
+        } catch (error) {
+            if (STATE.currentPatient?.patient_id !== activePatientId || STATE.currentComplaintSlug !== activeChainSlug) {
+                return;
+            }
+            STATE.encounterHistory = [];
+            log('Could not load encounter history from dropdown', error);
+        }
+
+        renderEncounterTabs();
+        startNewEncounter();
+    });
+
+    window._complaintDropdownBound = true;
 }
 // ============================================================================
 // SIDEBAR — Patient complaint click → fetch history from Redis
@@ -255,9 +353,9 @@ async function loadPatientComplaints(patientKey) {
     if (!patient) return;
 
     const popup = document.getElementById(`complaints-${patientKey}`);
-    if (!popup || popup.dataset.loaded === 'true') return;
-
-    popup.innerHTML = '<div class="complaint-item">Loading complaints...</div>';
+    if (popup) {
+        popup.innerHTML = '<div class="complaint-item">Loading complaints...</div>';
+    }
 
     try {
         const complaints = await apiRequest(
@@ -266,30 +364,67 @@ async function loadPatientComplaints(patientKey) {
             'Redis API'
         );
 
-        popup.innerHTML = '';
+        ensureComplaintDropdown();
+        const dropdown = document.getElementById('complaintDropdown');
+        if (dropdown) {
+            dropdown.innerHTML = '<option value="">New Complaint</option>';
+
+            (complaints || []).forEach((item) => {
+                const opt = document.createElement('option');
+                opt.value = item.chain_slug;
+                opt.textContent = `${item.display_name} (${item.visit_count})`;
+                dropdown.appendChild(opt);
+            });
+
+            const hasActiveSlug = Array.from(dropdown.options).some((opt) => opt.value === STATE.currentComplaintSlug);
+            if (STATE.currentComplaintSlug && hasActiveSlug) {
+                dropdown.value = STATE.currentComplaintSlug;
+            } else {
+                dropdown.value = '';
+            }
+        }
+
+        if (popup) {
+            popup.innerHTML = '';
+        }
 
         (complaints || []).forEach((item) => {
-            const complaintItem = document.createElement('div');
-            complaintItem.className = 'complaint-item';
-            complaintItem.textContent = `${item.display_name} (${item.visit_count} visits)`;
-            complaintItem.onclick = () => openComplaintChain(patientKey, item.display_name, item.chain_slug);
-            popup.appendChild(complaintItem);
+            if (popup) {
+                const complaintItem = document.createElement('div');
+                complaintItem.className = 'complaint-item';
+                complaintItem.textContent = `${item.display_name} (${item.visit_count} visits)`;
+                complaintItem.onclick = () => openComplaintChain(patientKey, item.display_name, item.chain_slug);
+                popup.appendChild(complaintItem);
+            }
         });
 
-        const newComplaintItem = document.createElement('div');
-        newComplaintItem.className = 'complaint-item new';
-        newComplaintItem.textContent = 'New Complaint';
-        newComplaintItem.onclick = () => startNewComplaint(patientKey);
-        popup.appendChild(newComplaintItem);
+        if (popup) {
+            const newComplaintItem = document.createElement('div');
+            newComplaintItem.className = 'complaint-item new';
+            newComplaintItem.textContent = 'New Complaint';
+            newComplaintItem.onclick = () => startNewComplaint(patientKey);
+            popup.appendChild(newComplaintItem);
+        }
 
-        popup.dataset.loaded = 'true';
+        if (popup) {
+            popup.dataset.loaded = 'false';
+        }
     } catch (e) {
-        popup.innerHTML = '';
-        const newComplaintItem = document.createElement('div');
-        newComplaintItem.className = 'complaint-item new';
-        newComplaintItem.textContent = 'New Complaint';
-        newComplaintItem.onclick = () => startNewComplaint(patientKey);
-        popup.appendChild(newComplaintItem);
+        ensureComplaintDropdown();
+        const dropdown = document.getElementById('complaintDropdown');
+        if (dropdown) {
+            dropdown.innerHTML = '<option value="">New Complaint</option>';
+            dropdown.value = '';
+        }
+
+        if (popup) {
+            popup.innerHTML = '';
+            const newComplaintItem = document.createElement('div');
+            newComplaintItem.className = 'complaint-item new';
+            newComplaintItem.textContent = 'New Complaint';
+            newComplaintItem.onclick = () => startNewComplaint(patientKey);
+            popup.appendChild(newComplaintItem);
+        }
         log('Could not load complaints', e);
     }
 }
@@ -299,15 +434,41 @@ async function openComplaintChain(patientKey, displayName, chainSlug) {
     if (!patient) return;
 
     activatePatient(patient, { complaint: displayName, complaintSlug: chainSlug, complaintLabel: displayName });
+    STATE.currentComplaintSlug = chainSlug;
+    STATE.encounterHistory = [];
+
+    const dropdown = document.getElementById('complaintDropdown');
+    if (dropdown) dropdown.value = chainSlug;
+
+    renderEncounterTabs();
+
+    const activePatientId = patient.patient_id;
+    const activeChainSlug = STATE.currentComplaintSlug;
 
     try {
-        STATE.encounterHistory = await apiRequest(
-            `${CONFIG.REDIS_API}/api/v1/patient/${patient.patient_id}/complaint?complaint=${encodeURIComponent(chainSlug)}&limit=20`,
+        const data = await apiRequest(
+            `${CONFIG.REDIS_API}/api/v1/patient/${activePatientId}/complaint?complaint=${encodeURIComponent(activeChainSlug)}&limit=20`,
             { method: 'GET' },
             'Redis API'
         );
+
+        if (STATE.currentPatient?.patient_id !== activePatientId || STATE.currentComplaintSlug !== activeChainSlug) {
+            return;
+        }
+
+        STATE.encounterHistory = Array.isArray(data) ? data : [];
         STATE.encounterHistory.sort((a, b) => a.visit_number - b.visit_number);
+
+        addLog('info', 'Encounters rendered', {
+            patient_id: activePatientId,
+            complaint_chain: activeChainSlug,
+            count: STATE.encounterHistory.length
+        });
     } catch (e) {
+        if (STATE.currentPatient?.patient_id !== activePatientId || STATE.currentComplaintSlug !== activeChainSlug) {
+            return;
+        }
+        STATE.encounterHistory = [];
         log('Could not load encounter history', e);
     }
 
@@ -318,6 +479,12 @@ async function openComplaintChain(patientKey, displayName, chainSlug) {
 function startNewComplaint(patientKey) {
     const patient = getPatientById(patientKey);
     if (!patient) return;
+
+    STATE.currentComplaintSlug = null;
+    STATE.encounterHistory = [];
+
+    const dropdown = document.getElementById('complaintDropdown');
+    if (dropdown) dropdown.value = '';
 
     activatePatient(patient, { complaintLabel: 'New Complaint' });
 
@@ -535,9 +702,6 @@ function startNewEncounter() {
     STATE.selectedInvestigations = [];
     STATE.selectedMedications    = [];
     STATE.selectedProcedures     = [];
-    if (!STATE.currentComplaint) {
-        STATE.currentComplaintSlug = null;
-    }
 
     const visitNum = STATE.encounterHistory.length + 1;
     document.getElementById('currentComplaint').textContent =
@@ -667,6 +831,8 @@ document.addEventListener('DOMContentLoaded', () => {
         clearInterval(MONITOR.healthIntervalId);
     }
     MONITOR.healthIntervalId = setInterval(checkAllServices, 10000);
+
+    ensureComplaintDropdown();
 
     if (typeof renderPatientList === 'function') {
         renderPatientList();
@@ -1119,6 +1285,8 @@ async function issuePrescription() {
     const allProc = [...STATE.selectedProcedures,     ...getManualEntries('manualProcList')];
     const btn = document.querySelector('.btn-success');
 
+    if (btn?.disabled) return;
+
     // Auto-derive slug from first chief complaint chip if slug not already set
         if (!STATE.currentComplaintSlug) {
         const autoChips = [...document.querySelectorAll("#chiefComplaintChips .chip")]
@@ -1137,7 +1305,8 @@ async function issuePrescription() {
     const payload = {
         patient_id:              getCurrentPatientId(),
         complaint_chain:         STATE.currentComplaintSlug,
-        visit_date:              new Date().toISOString().split('T')[0],
+        visit_date:   new Date().toISOString().split('T')[0],  // back to "2026-04-08"
+        visit_number: STATE.encounterHistory.length + 1,
         chief_complaints:        chiefComplaints,
         vitals: {
             height_cm:    parseFloat(document.getElementById('height').value)   || null,
@@ -1163,6 +1332,7 @@ async function issuePrescription() {
 
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+        addLog('info', 'Prescription payload', payload);
         const saved = await apiRequest(
             `${CONFIG.REDIS_API}/api/v1/consultation`,
             {
@@ -1170,12 +1340,30 @@ async function issuePrescription() {
             },
             'Redis API'
         );
-        const exists = STATE.encounterHistory.find(e => e.consultation_id === saved.consultation_id);
-        if (!exists) {
-            STATE.encounterHistory.push(saved);
+
+        const patientId = getCurrentPatientId();
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await loadPatientComplaints(patientId);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (STATE.currentComplaintSlug) {
+            const refreshed = await apiRequest(
+                `${CONFIG.REDIS_API}/api/v1/patient/${patientId}/complaint?complaint=${encodeURIComponent(STATE.currentComplaintSlug)}&limit=20`,
+                { method: 'GET' },
+                'Redis API'
+            );
+            STATE.encounterHistory = Array.isArray(refreshed) ? refreshed : [];
             STATE.encounterHistory.sort((a, b) => a.visit_number - b.visit_number);
+        } else {
+            STATE.encounterHistory = [];
         }
+
         renderEncounterTabs();
+
+        addLog('success', 'Post-save refresh complete', {
+            patient_id: patientId,
+            complaint_chain: STATE.currentComplaintSlug,
+            encounter_count: STATE.encounterHistory.length
+        });
 
         if (btn) {
             btn.disabled = false;
