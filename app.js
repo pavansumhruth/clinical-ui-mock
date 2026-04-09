@@ -139,6 +139,18 @@ async function apiRequest(url, options, serviceName, settings = {}) {
     }
 }
 
+async function syncConsultationToTriage(payload) {
+    return apiRequest(
+        `${CONFIG.TRIAGE_API}/api/v1/consultation`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        },
+        'Triage API'
+    );
+}
+
 async function checkAllServices() {
     const services = [
         { name: 'Redis API', url: `${CONFIG.REDIS_API}/health` },
@@ -1057,6 +1069,7 @@ function buildClinicalHistory() {
 async function generateQuestions() {
     const chips = document.querySelectorAll('#chiefComplaintChips .chip');
     const complaints = Array.from(chips).map(c => c.textContent.replace('×', '').trim());
+    const manualQuestionAnswers = getManualQuestionAnswers();
     if (complaints.length === 0) { alert('Please add a chief complaint first.'); return; }
 
     const chiefComplaint = complaints.join(', ');
@@ -1087,6 +1100,7 @@ async function generateQuestions() {
                     complaint_chain:  complaintChain,
                     clinical_history: clinicalHistory,
                     patient_id:       getCurrentPatientId(),
+                    manual_key_questions: manualQuestionAnswers,
                 })
             },
             'Triage API'
@@ -1139,7 +1153,11 @@ async function answerQuestion(btn, selectedOption, qIndex) {
             `${CONFIG.TRIAGE_API}/answer`,
             {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: STATE.sessionId, selected_option: selectedOption })
+                body: JSON.stringify({
+                    session_id:           STATE.sessionId,
+                    selected_option:      selectedOption,
+                    manual_key_questions: getManualQuestionAnswers(),
+                })
             },
             'Triage API'
         );
@@ -1240,7 +1258,12 @@ async function generateInvestigations() {
             `${CONFIG.TRIAGE_API}/select-diagnoses`,
             {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedDiagnoses] })
+                body: JSON.stringify({
+                    session_id:           STATE.sessionId,
+                    selected:             [...STATE.selectedDiagnoses],
+                    manual_key_questions: getManualQuestionAnswers(),
+                    manual_diagnoses:     getManualEntries('manualDiagList'),
+                })
             },
             'Triage API'
         );
@@ -1299,7 +1322,12 @@ async function generateMedications() {
             `${CONFIG.TRIAGE_API}/select-investigations`,
             {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedInvestigations] })
+                body: JSON.stringify({
+                    session_id:              STATE.sessionId,
+                    selected:                [...STATE.selectedInvestigations],
+                    manual_key_questions:    getManualQuestionAnswers(),
+                    manual_investigations:   getManualEntries('manualInvList'),
+                })
             },
             'Triage API'
         );
@@ -1362,7 +1390,13 @@ async function generateProcedures() {
             `${CONFIG.TRIAGE_API}/select-medications`,
             {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: STATE.sessionId, selected: [...STATE.selectedMedications] })
+                body: JSON.stringify({
+                    session_id:           STATE.sessionId,
+                    selected:             [...STATE.selectedMedications],
+                    manual_key_questions: getManualQuestionAnswers(),
+                    manual_medications:   getManualEntries('manualMedList'),
+                    manual_procedures:    getManualEntries('manualProcList'),
+                })
             },
             'Triage API'
         );
@@ -1400,32 +1434,161 @@ function saveProcedures() { hideUnselected('proceduresContainer'); }
 function addManualQA() {
     const item = document.createElement('div');
     item.className = 'manual-qa-item';
+    item.dataset.confirmed = 'false';
+    item.style.cssText = `
+        display: flex; flex-direction: column; gap: 6px;
+        padding: 10px 12px; margin-bottom: 8px;
+        border: 1.5px solid #e2e8f0; border-radius: 8px;
+        background: #f8fafc;
+    `;
     item.innerHTML = `
-        <input type="text" placeholder="Enter your question..." data-type="question"/>
-        <input type="text" placeholder="Enter the answer..."   data-type="answer"/>
+        <input type="text" placeholder="Question e.g. Fever duration?"
+            data-type="question"
+            style="padding:7px 10px; border:1px solid #cbd5e1;
+                   border-radius:6px; font-size:13px; width:100%; box-sizing:border-box;"/>
+        <input type="text" placeholder="Answer e.g. 3 days"
+            data-type="answer"
+            style="padding:7px 10px; border:1px solid #cbd5e1;
+                   border-radius:6px; font-size:13px; width:100%; box-sizing:border-box;"/>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:2px;">
+            <button
+                onclick="confirmManualQA(this)"
+                style="padding:5px 16px; background:#3b82f6; color:white;
+                       border:none; border-radius:6px; font-size:12px;
+                       cursor:pointer; font-weight:600;">
+                ✓ Add Question
+            </button>
+            <button
+                onclick="removeManualQAItem(this)"
+                style="padding:5px 12px; background:#fee2e2; color:#dc2626;
+                       border:none; border-radius:6px; font-size:12px; cursor:pointer;">
+                × Remove
+            </button>
+            <span class="qa-confirmed-badge"
+                style="display:none; color:#10b981; font-size:12px; font-weight:600;">
+                ✓ Question Added
+            </span>
+        </div>
     `;
     document.getElementById('manualQAList').appendChild(item);
+}
+
+function confirmManualQA(btn) {
+    const item = btn.closest('.manual-qa-item');
+    const qInput = item.querySelector('[data-type="question"]');
+    const aInput = item.querySelector('[data-type="answer"]');
+    const q = qInput.value.trim();
+    const a = aInput.value.trim();
+
+    if (!q || !a) {
+        alert('Please enter both a question and an answer before adding.');
+        return;
+    }
+
+    // Lock inputs so they cannot be changed after confirm
+    qInput.disabled = true;
+    aInput.disabled = true;
+    qInput.style.background = '#f1f5f9';
+    aInput.style.background = '#f1f5f9';
+    qInput.style.color = '#334155';
+    aInput.style.color = '#334155';
+
+    // Mark as confirmed
+    item.dataset.confirmed = 'true';
+    item.style.borderColor = '#10b981';
+    item.style.background = '#f0fdf4';
+
+    // Hide confirm button, show badge
+    btn.style.display = 'none';
+    item.querySelector('.qa-confirmed-badge').style.display = 'inline';
+}
+
+function removeManualQAItem(btn) {
+    btn.closest('.manual-qa-item').remove();
 }
 
 function addManualEntry(containerId, placeholder) {
     const item = document.createElement('div');
     item.className = 'manual-entry-item';
+    item.dataset.confirmed = 'false';
+    item.style.cssText = `
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 8px; margin-bottom: 6px;
+        border: 1.5px solid #e2e8f0; border-radius: 8px;
+        background: #f8fafc;
+    `;
     item.innerHTML = `
-        <input type="text" placeholder="${placeholder}"/>
-        <button class="btn-remove" onclick="removeManualEntry(this, '${containerId}')">×</button>
+        <input type="text" placeholder="${placeholder}"
+            style="flex:1; padding:7px 10px; border:1px solid #cbd5e1;
+                   border-radius:6px; font-size:13px;"/>
+        <button
+            onclick="confirmManualEntry(this, '${containerId}')"
+            style="padding:5px 14px; background:#3b82f6; color:white;
+                   border:none; border-radius:6px; font-size:12px;
+                   cursor:pointer; font-weight:600; white-space:nowrap;">
+            ✓ Add
+        </button>
+        <button
+            onclick="removeManualEntry(this, '${containerId}')"
+            style="padding:5px 10px; background:#fee2e2; color:#dc2626;
+                   border:none; border-radius:6px; font-size:12px;
+                   cursor:pointer; font-weight:600;">
+            ×
+        </button>
+        <span class="entry-confirmed-badge"
+            style="display:none; color:#10b981; font-size:12px;
+                   font-weight:600; white-space:nowrap;">
+            ✓ Added
+        </span>
     `;
     document.getElementById(containerId).appendChild(item);
-    const inputEl = item.querySelector('input[type="text"]');
-    inputEl.addEventListener('input', () => {
-        if (inputEl.value.trim()) {
-            handleManualEntryDownstream(containerId);
-        }
-    });
+}
+
+function confirmManualEntry(btn, containerId) {
+    const item = btn.closest('.manual-entry-item');
+    const input = item.querySelector('input[type="text"]');
+    const val = input.value.trim();
+
+    if (!val) {
+        alert('Please type a value before adding.');
+        return;
+    }
+
+    // Lock input
+    input.disabled = true;
+    input.style.background = '#f1f5f9';
+    input.style.color = '#334155';
+
+    // Mark confirmed
+    item.dataset.confirmed = 'true';
+    item.style.borderColor = '#10b981';
+    item.style.background = '#f0fdf4';
+
+    // Hide confirm button, show badge
+    btn.style.display = 'none';
+    item.querySelector('.entry-confirmed-badge').style.display = 'inline';
+
+    // Trigger downstream clear if needed
+    handleManualEntryDownstream(containerId);
 }
 
 function getManualEntries(containerId) {
-    return Array.from(document.querySelectorAll(`#${containerId} input`))
-        .map(i => i.value.trim()).filter(Boolean);
+    return Array.from(
+        document.querySelectorAll(`#${containerId} .manual-entry-item`)
+    )
+    .filter(item => item.dataset.confirmed === 'true')
+    .map(item => item.querySelector('input[type="text"]')?.value?.trim())
+    .filter(Boolean);
+}
+
+function getManualQuestionAnswers() {
+    return Array.from(document.querySelectorAll('#manualQAList .manual-qa-item'))
+        .filter(item => item.dataset.confirmed === 'true')
+        .map(item => ({
+            question: item.querySelector('[data-type="question"]')?.value?.trim() || '',
+            answer:   item.querySelector('[data-type="answer"]')?.value?.trim()   || '',
+        }))
+        .filter(({ question, answer }) => question && answer);
 }
 
 function addManualDiagnosis()     { addManualEntry('manualDiagList', 'Enter diagnosis...'); }
@@ -1517,6 +1680,7 @@ async function generateNotes(section) {
 async function issuePrescription() {
     const chips           = document.querySelectorAll('#chiefComplaintChips .chip');
     const chiefComplaints = Array.from(chips).map(c => c.textContent.replace('×', '').trim());
+    const manualQuestionAnswers = getManualQuestionAnswers();
     const allDx   = [...STATE.selectedDiagnoses,      ...getManualEntries('manualDiagList')];
     const allInv  = [...STATE.selectedInvestigations, ...getManualEntries('manualInvList')];
     const allMeds = [...STATE.selectedMedications,    ...getManualEntries('manualMedList')];
@@ -1553,7 +1717,13 @@ async function issuePrescription() {
             temp_celsius: parseFloat(document.getElementById('temp').value)     || null,
             bp_mmhg:      document.getElementById('bp').value || null,
         },
-        key_questions:           STATE.questions.map((q, i) => ({ question: q.question || q, answer: STATE.answers[i] || q.answer || '' })),
+        key_questions: [
+            ...STATE.questions.map(q => ({
+                question: q.question || q,
+                answer: q.answer || ''
+            })),
+            ...getManualQuestionAnswers().map(({ question, answer }) => ({ question, answer })),
+        ],
         key_questions_ai_notes:  '',
         diagnoses:               allDx.map(d => ({ name: d, selected: true, is_custom: false })),
         diagnoses_ai_notes:      document.getElementById('diagnosisNotes').value || '',
@@ -1571,13 +1741,32 @@ async function issuePrescription() {
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
         addLog('info', 'Prescription payload', payload);
-        const saved = await apiRequest(
+        let saved = null;
+        let triageSaved = null;
+
+        saved = await apiRequest(
             `${CONFIG.REDIS_API}/api/v1/consultation`,
             {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
             },
             'Redis API'
         );
+
+        try {
+            triageSaved = await syncConsultationToTriage(payload);
+            addLog('success', 'Triage consultation sync complete', {
+                patient_id: payload.patient_id,
+                complaint_chain: payload.complaint_chain,
+                consultation_id: triageSaved?.consultation_id || saved?.consultation_id || null
+            });
+        } catch (triageError) {
+            addLog('error', 'Triage consultation sync failed', {
+                patient_id: payload.patient_id,
+                complaint_chain: payload.complaint_chain,
+                error: triageError.message || 'Unknown error'
+            });
+            alert(`Saved to Redis, but Triage sync failed: ${triageError.message}`);
+        }
 
         const patientId = getCurrentPatientId();
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -1605,13 +1794,18 @@ async function issuePrescription() {
 
         if (btn) {
             btn.disabled = false;
-            btn.textContent = 'Prescription Issued ✓';
+            btn.textContent = triageSaved ? 'Prescription Issued ✓' : 'Saved to Redis ✓';
             btn.style.backgroundColor = '#10b981';
             btn.style.color = '#fff';
         }
         log('Saved', saved.consultation_id);
     } catch (e) {
         alert(e.message || 'Save failed');
+        addLog('error', 'Prescription save/sync failed', {
+            patient_id: getCurrentPatientId(),
+            complaint_chain: STATE.currentComplaintSlug,
+            error: e.message || 'Unknown error'
+        });
         if (btn) { btn.disabled = false; btn.textContent = 'Issue Prescription'; }
     }
 }
